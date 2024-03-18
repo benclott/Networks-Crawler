@@ -14,7 +14,10 @@ class Crawler:
         self.password = args.password
 
     def run(self):
-        request = "GET / HTTP/1.0\r\n\r\n"
+        server, port = self.sendto()
+        rootpath = '/fakebook/'
+        localpath = '/accounts/login/?next=/fakebook/'
+        request = f'GET {localpath} HTTP/1.1\r\nHost: {server}:{port}\r\n\r\n'
 
         print("Request to %s:%d" % (self.server, self.port))
         print(request)
@@ -25,6 +28,19 @@ class Crawler:
         data = mysocket.recv(1000)
         print("Response:\n%s" % data.decode('ascii'))
 
+
+    #Method to decide which server/host to send the website too
+    def sendto(self):
+        ##Check if args.s exissts
+        s = args.server
+        p = args.port
+        if s == "proj5.3700.network" and p == 443:
+            #The default has been provided so...
+            return ("www.3700.network", 443)
+        else:
+            return (s, p)
+
+    ##Send 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
     parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
@@ -34,3 +50,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     sender = Crawler(args)
     sender.run()
+
+
