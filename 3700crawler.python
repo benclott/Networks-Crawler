@@ -2,9 +2,14 @@
 
 import argparse
 import socket
+import ssl
+from html.parser import HTMLParser
+import time
+import sys
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
+route = []
 
 class Crawler:
     def __init__(self, args):
@@ -14,19 +19,86 @@ class Crawler:
         self.password = args.password
 
     def run(self):
-        server, port = self.sendto()
-        rootpath = '/fakebook/'
-        localpath = '/accounts/login/?next=/fakebook/'
-        request = f'GET {localpath} HTTP/1.1\r\nHost: {server}:{port}\r\n\r\n'
-
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
-        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        count = 0
+        data = '' ##Store the data of the message
+        mysocket = self.sockInit()
         mysocket.connect((self.server, self.port))
-        mysocket.send(request.encode('ascii'))
+        while(count <= 2):
+            path = ""
+            if count == 0:
+                #Wee need to send the first message
+                path = self.getPath(data)#new path 
+                request = self.createHTML(path[0])
+                count = count + 1
+            else:
+                #We have already gotten one message at least so send based on what the new information is
+                path = self.getPath(data)#new path 
+                if path[0] == "200":
+                    request = path[1]
+                else:
+                    request = self.createHTML(path[0])
+                    count = count + 1
 
-        data = mysocket.recv(1000)
-        print("Response:\n%s" % data.decode('ascii'))
+            mysocket.send(request.encode('ascii'))
+
+            #data = self.receive_message(mysocket)
+            data = mysocket.recv(1000000).decode('ascii')
+            #print("Response:\n%s" % data.decode('ascii'))
+
+    #Handle the work of the socket and wrapping so it's out of main
+    ##return a socket
+    def sockInit(self):
+        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ssl_context = ssl.create_default_context()
+        mysocket = ssl_context.wrap_socket(mysocket, server_hostname=self.server)
+        return mysocket
+
+    #Received the message and deals with exterior crap
+    def receive_message(self, sock):
+        #Empty buffer
+        response = ""
+        while(True):
+            try:
+                data = sock.recv(4096)
+            except sock.TimeoutError:
+                break
+        
+            #We are at the end of the json
+            if(data == b'\n'):
+                break
+            #We are at the end of anything to be read
+            if(data == b''):
+                break
+            response += data.decode('ascii')
+        return response
+
+    '''
+    Method to handle the response of the server
+    This is where we initialize and call the html library we have created
+    Should be looped through in the run and all the magic of html understanding happens here
+    will create the path to send the next request and then also the message
+    '''
+    def getPath(self, data):
+        root = "/fakebook/"
+        if data == '':
+            return [root, 0]
+        brokenData = data.split("\n")
+        htmlNumber = int(brokenData[0].split(' ')[1])
+        if htmlNumber == 200:
+            print(htmlNumber)
+            print(data)
+            parser = customHTML()
+            parser.feed(data)
+            return ["200", parser.sendPost()]
+        elif htmlNumber == 302:
+            print(htmlNumber)
+            print(data)
+            #We have been redirected
+            redirectedPath = brokenData[4].split(" ")[1].strip()
+            return [redirectedPath, 0]
+        elif htmlNumber == 400:
+            print("You SUCK!!\n\n")
+            sys.exit(0)
 
 
     #Method to decide which server/host to send the website too
@@ -39,6 +111,56 @@ class Crawler:
             return ("www.3700.network", 443)
         else:
             return (s, p)
+
+    def createHTML(self, path):
+        httptype = "HTTP/1.1"
+        #request = f'GET {} {}\r\nHost: {}:{}\r\nAccept-Encoding: identity\r\n\r\n'.format(path, httptype, self.server, self.port)
+        request = 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
+        return request
+
+
+'''Create a custom HTML class that will identify and handle each problem'''
+class customHTML(HTMLParser):
+
+    '''
+    Look for start tags
+
+    Figure out the start tag and then call the necessary next function
+    will have base case for if everything is empty 
+    '''
+    def handleState(self, tag, attrs):
+        pass
+
+    '''
+    We have reached the end of the tag so move on somehow and then recall handleState
+    '''
+    def handleEnd(self, tag):
+        pass
+
+    '''
+    To be called inside the state tag
+    Based on which function mpping it should do something 
+    '''
+    def handle_data(self, data):
+        pass
+
+    
+    '''
+    Method to build a post request with the provided dat from class
+    
+    1. Take in all day
+    2. Create a string of all necessary tags 
+
+    The idea is that this will send a post, then we will skip the sending of a get
+    After that we will read and start over
+
+    Should return a path to a post message
+    
+    '''
+    def sendPost(self):
+        pass
+
+
 
     ##Send 
 if __name__ == "__main__":
