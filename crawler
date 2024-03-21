@@ -101,18 +101,15 @@ class Crawler:
             redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the path from the response
             return [redirectedPath, 0] # Return path that the server redirects us to
         elif response_code == 200:
-            '''
-            Lot of work here i think, need to parse all of the html to then return the next path
-            '''
-            parser = customHTML()
+            # Split the response into header and body parts
+            header_end_index = data.find('\r\n\r\n')
+            header = data[:header_end_index]
+            html = data[header_end_index + 4:].strip()
 
-            html = data.split('<')[1]
             print(html)
-            parser.feed(html)
-
-            #next_path = parser.some_method
-            '''parser.sendPost()'''
-            return [next_path, 0]
+            parser = customHTML()
+            parser.feed(html)  # Call feed method to start parsing
+            return [200, 0]
         
         elif str(response_code).startswith('4'):
             print("You SUCK!!\n\n")
@@ -147,26 +144,26 @@ class customHTML(HTMLParser):
     Figure out the start tag and then call the necessary next function
     will have base case for if everything is empty 
     '''
-    def handleState(self, tag, attrs):
-        pass
+    def handle_starttag(self, tag, attrs):
+        print("Encountered a start tag:", tag)
+
 
     '''
     We have reached the end of the tag so move on somehow and then recall handleState
     '''
-    def handleEnd(self, tag):
-        pass
+    def handle_endtag(self, tag):
+        print("Encountered an end tag :", tag)
 
     '''
     To be called inside the state tag
     Based on which function mpping it should do something 
     '''
     def handle_data(self, data):
-        pass
+        print("Encountered some data  :", data)
 
     
     '''
     Method to build a post request with the provided dat from class
-    
     1. Take in all day
     2. Create a string of all necessary tags 
 
@@ -174,11 +171,9 @@ class customHTML(HTMLParser):
     After that we will read and start over
 
     Should return a path to a post message
-    
     '''
     def sendPost(self):
         pass
-
 
 
     ##Send 
