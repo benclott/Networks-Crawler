@@ -47,10 +47,15 @@ class Crawler:
             # #data = self.receive_message(mysocket)
             # #print("Response:\n%s" % data.decode('ascii'))
 
-            path = self.getNextPath(data) # Gets the next path to check
+            path = self.getNextPath(data) # Gets the next path to check            
             if path == '/accounts/login/?next=/fakebook/' or path == '/accounts/login': ####### HANDLE LOGIN HERE #############
                 print('Time to login')
-                req = self.handleLogIn(data)
+                response = data.split("\n")
+                for row in response:
+                    if row.startswith('set-cookie'):
+                        row = row.split(" ")[1].split(';')
+                        cookie = row[0]
+                req = self.handleLogIn(data, cookie)
                 print('Request to send: ', req)
                 self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
             else:
@@ -66,7 +71,7 @@ class Crawler:
     '''
     Create the login post request
     '''   
-    def handleLogIn(self, data):
+    def handleLogIn(self, data, cookie):
         username = 'ahravsoi'
         password = '5a008aff5d37e8d570b1547082f65ce5e3f1033775961f6e0cb1a0f0411177db'
         nextparam = '%2Ffakebook%2F'
@@ -76,6 +81,7 @@ class Crawler:
         request += f"Host: {''}\r\n"
         request += "Content-Type: application/x-www-form-urlencoded\r\n"
         request += f"Content-Length: {len(username) + len(password) + len(nextparam)}\r\n"  # Length of form data
+        request += f"Cookie: {cookie}\r\n"
         request += "\r\n"
         request += f'username={username}&password={password}'
 
@@ -135,7 +141,6 @@ class Crawler:
             parser = customHTML()
             parser.feed(html)  # Call feed method to start parsing
             return parser.getUnseen()
-        
         elif response_code.startswith('4'):
             print("You SUCK!!\n\n")
             sys.exit(0)
