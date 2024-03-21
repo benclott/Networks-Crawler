@@ -16,39 +16,51 @@ class Crawler:
         self.port = args.port
         self.username = args.username
         self.password = args.password
-    routes = []
+
+    paths_checked = []
 
     def run(self):
-        count = 0
-        data = '' ##Store the data of the message
-        mysocket = self.sockInit()
+        count = 0 # Counts how many requests we have set
+        data = ''  # Store the data of the most recent recieved message
+        mysocket = self.sockInit() 
         mysocket.connect((self.server, self.port))
         while(count <= 2):
             path = ""
-            if count == 0:
-                #Wee need to send the first message
-                path = self.getPath(data)#new path 
-                request = self.createHTML(path[0])
-                self.routes.append(path[0])
-                count = count + 1
-            else:
-                #We have already gotten one message at least so send based on what the new information is
-                path = self.getPath(data)#new path 
-                if path[0] == "200":
-                    request = path[1]
-                else:
-                    request = self.createHTML(path[0])
-                    self.routes.append(path[0])
-                    count = count + 1
 
+            # #Send the first request to the server
+            # if count == 0:
+            #     path = self.getNextPath(data)#new path 
+            #     request = self.createHTML(path[0])
+            #     self.paths_checked.append(path[0])
+            #     count = count + 1
+            
+            # #A message has already been recieved so use feedback information to craft next request
+            # else:
+            #     path = self.getNextPath(data) # Retrive the new path to send request to. 
+            #     if path[0] == "200": # Ignore for now
+            #         request = path[1]
+            #     else:
+            #         request = self.createHTML(path[0]) # Converts the path to the correct request format
+            #         self.paths_checked.append(path[0]) # Mark the path as seen
+            #         count = count + 1
+            # #data = self.receive_message(mysocket)
+            # #print("Response:\n%s" % data.decode('ascii'))
+
+            path = self.getNextPath(data) # Gets the next path to check
+            request = self.createHTML(path[0]) # Converts the path to the correct request format
+            self.paths_checked.append(path[0]) # Mark the path as seen so it does not get checked again
+            count = count + 1
+
+            print("REQUEST SENT: ", request)
             mysocket.send(request.encode('ascii'))
-
-            #data = self.receive_message(mysocket)
             data = mysocket.recv(1000000).decode('ascii')
-            #print("Response:\n%s" % data.decode('ascii'))
+            #print("RRESPONSE RECIEVED: ", data)
+            
 
-    #Handle the work of the socket and wrapping so it's out of main
-    ##return a socket
+    '''
+        Create and preps the socket with ssl.
+        Returns the socket object.
+    '''
     def sockInit(self):
         mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_context = ssl.create_default_context()
@@ -57,19 +69,17 @@ class Crawler:
 
     #Received the message and deals with exterior crap
     def receive_message(self, sock):
-        #Empty buffer
-        response = ""
+        
+        response = "" # Empty buffer
         while(True):
             try:
                 data = sock.recv(4096)
             except sock.TimeoutError:
+                break     
+            if(data == b'\n'): # We are at the end of the json
                 break
-        
-            #We are at the end of the json
-            if(data == b'\n'):
-                break
-            #We are at the end of anything to be read
-            if(data == b''):
+            
+            if(data == b''): # We are at the end of anything to be read
                 break
             response += data.decode('ascii')
         return response
@@ -80,25 +90,31 @@ class Crawler:
     Should be looped through in the run and all the magic of html understanding happens here
     will create the path to send the next request and then also the message
     '''
-    def getPath(self, data):
+    def getNextPath(self, data):
         root = "/fakebook/"
-        if data == '':
+        if data == '': # first run through this will be empty as nothing has been recieved
             return [root, 0]
-        brokenData = data.split("\n")
-        htmlNumber = int(brokenData[0].split(' ')[1])
-        if htmlNumber == 200:
-            print(htmlNumber)
-            print(data)
+
+        brokenData = data.split("\n") # Split the response into lines
+        response_code = int(brokenData[0].split(' ')[1]) # Extract response code from line 1
+        if response_code == 302: # Server returned redirected PATH
+            redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the path from the response
+            return [redirectedPath, 0] # Return path that the server redirects us to
+        elif response_code == 200:
+            '''
+            Lot of work here i think, need to parse all of the html to then return the next path
+            '''
             parser = customHTML()
-            parser.feed(data)
-            return ["200", parser.sendPost()]
-        elif htmlNumber == 302:
-            print(htmlNumber)
-            print(data)
-            #We have been redirected
-            redirectedPath = brokenData[4].split(" ")[1].strip()
-            return [redirectedPath, 0]
-        elif htmlNumber == 400:
+
+            html = data.split('<')[1]
+            print(html)
+            parser.feed(html)
+
+            #next_path = parser.some_method
+            '''parser.sendPost()'''
+            return [next_path, 0]
+        
+        elif str(response_code).startswith('4'):
             print("You SUCK!!\n\n")
             sys.exit(0)
 
@@ -123,6 +139,7 @@ class Crawler:
 
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
+    uncrawled = []
 
     '''
     Look for start tags
