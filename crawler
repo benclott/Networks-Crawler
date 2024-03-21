@@ -48,18 +48,39 @@ class Crawler:
             # #print("Response:\n%s" % data.decode('ascii'))
 
             path = self.getNextPath(data) # Gets the next path to check
-            if path == '/accounts/login/?next=/fakebook/':
-                ####### HANDLE LOGIN HERE #############
-                pass
-            request = self.createHTML(path) # Converts the path to the correct request format
-            self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
-            count = count + 1
+            if path == '/accounts/login/?next=/fakebook/' or path == '/accounts/login': ####### HANDLE LOGIN HERE #############
+                print('Time to login')
+                req = self.handleLogIn(data)
+                print('Request to send: ', req)
+                self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
+            else:
+                request = self.createHTML(path) # Converts the path to the correct request format
+                self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
+                count = count + 1
 
             print("REQUEST SENT: ", path)
             mysocket.send(request.encode('ascii'))
             data = mysocket.recv(1000000).decode('ascii')
-            #print("RRESPONSE RECIEVED: ", data)
-            
+            print("RRESPONSE RECIEVED: ", data)
+
+    '''
+    Create the login post request
+    '''   
+    def handleLogIn(self, data):
+        username = 'ahravsoi'
+        password = '5a008aff5d37e8d570b1547082f65ce5e3f1033775961f6e0cb1a0f0411177db'
+        nextparam = '%2Ffakebook%2F'
+        data = f'username={username}&password={password}&next={nextparam}'
+
+        request = f"POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\n"
+        request += f"Host: {''}\r\n"
+        request += "Content-Type: application/x-www-form-urlencoded\r\n"
+        request += f"Content-Length: {len(username) + len(password) + len(nextparam)}\r\n"  # Length of form data
+        request += "\r\n"
+        request += f'username={username}&password={password}'
+
+        return request
+
 
     '''
         Create and preps the socket with ssl.
@@ -73,7 +94,6 @@ class Crawler:
 
     #Received the message and deals with exterior crap
     def receive_message(self, sock):
-        
         response = "" # Empty buffer
         while(True):
             try:
@@ -139,9 +159,10 @@ class Crawler:
         return request
 
 
+
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
-    paths = [] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+    paths = [['/', True]] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
     flags = [] # If we find flags in html store them here
     flag_found = False # If current page finds a flag this becomes true
 
