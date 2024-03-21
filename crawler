@@ -141,9 +141,9 @@ class Crawler:
 
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
-    paths = [] # (Path, Boolean) True --> Path has been seen, False --> Path has not been seen
-    flags = []
-    flag_found = False
+    paths = [] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+    flags = [] # If we find flags in html store them here
+    flag_found = False # If current page finds a flag this becomes true
 
     '''
     Returns an unseen path for the crawler to visit next and
@@ -152,7 +152,7 @@ class customHTML(HTMLParser):
     def getUnseen(self):
         for path in self.paths:
             if path[1] == False:
-                path[1] = True
+                path[1] = True # Set status to true so that we dont crawl again
                 return path[0]
 
     '''
@@ -165,11 +165,11 @@ class customHTML(HTMLParser):
         #print('Ecountered start ', tag)
         if tag == 'a':  # Check if the tag is an anchor tag
             for attr in attrs: # loop through all of the paths found
-                if attr[0] == 'href':
-                    paths = {path for path, seen in self.paths}
-                    if attr[1] not in paths: # Path has not been encountered, add it to the list
+                if attr[0] == 'href': # if we find a href
+                    paths = {path for path, seen in self.paths} # Extract the paths from the list
+                    if attr[1] not in paths: # Path has not been encountered, continue handling
                         #print(f'New Path {attr[1]}')
-                        if self.validURL(attr[1]):
+                        if self.validURL(attr[1]): # Checks to make sure the URL is within our target domain
                             self.paths.append([attr[1], False])  # Append the URL to the list of URLs
                             print('Added new route. Current Paths and Status: ', self.paths)
                         else:
@@ -179,7 +179,7 @@ class customHTML(HTMLParser):
                         #print(f'Already seen {attr[1]}... Ignoring')
                         continue
                             
-        if tag == 'h3':
+        if tag == 'h3': # This is where flags are
             for attr in attrs:
                 if attr[0] == 'class' and 'secret_flag' in attr[1]:
                     self.flag_found = True
@@ -203,8 +203,8 @@ class customHTML(HTMLParser):
         Returns false otherwise
     '''
     def validURL(self, url):
-        parsed = urllib.parse.urlparse(url).netloc.strip()
-        base = urllib.parse.urlparse("https://www.3700.network").netloc
+        parsed = urllib.parse.urlparse(url).netloc.strip() # extract netloc from the URL we found
+        base = urllib.parse.urlparse("https://www.3700.network").netloc # this is our target domains netloc
         if parsed != "":
             #print(f'Comparison: {base} and {parsed}, {base == parsed}')
             return base == parsed
