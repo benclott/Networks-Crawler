@@ -6,6 +6,7 @@ import ssl
 from html.parser import HTMLParser
 import time
 import sys
+import urllib.parse
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
@@ -47,11 +48,14 @@ class Crawler:
             # #print("Response:\n%s" % data.decode('ascii'))
 
             path = self.getNextPath(data) # Gets the next path to check
-            request = self.createHTML(path[0]) # Converts the path to the correct request format
-            self.paths_checked.append(path[0]) # Mark the path as seen so it does not get checked again
+            if path == '/accounts/login/?next=/fakebook/':
+                ####### HANDLE LOGIN HERE #############
+                pass
+            request = self.createHTML(path) # Converts the path to the correct request format
+            self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
             count = count + 1
 
-            print("REQUEST SENT: ", request)
+            print("REQUEST SENT: ", path)
             mysocket.send(request.encode('ascii'))
             data = mysocket.recv(1000000).decode('ascii')
             #print("RRESPONSE RECIEVED: ", data)
@@ -93,25 +97,26 @@ class Crawler:
     def getNextPath(self, data):
         root = "/fakebook/"
         if data == '': # first run through this will be empty as nothing has been recieved
-            return [root, 0]
+            return root
 
         brokenData = data.split("\n") # Split the response into lines
-        response_code = int(brokenData[0].split(' ')[1]) # Extract response code from line 1
-        if response_code == 302: # Server returned redirected PATH
+        response_code = brokenData[0].split(' ')[1] # Extract response code from line 1
+        print(f'Recieved {response_code}')
+        if response_code == '302': # Server returned redirected PATH
             redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the path from the response
-            return [redirectedPath, 0] # Return path that the server redirects us to
-        elif response_code == 200:
+            return redirectedPath # Return path that the server redirects us to
+        elif response_code == '200':
             # Split the response into header and body parts
             header_end_index = data.find('\r\n\r\n')
             header = data[:header_end_index]
             html = data[header_end_index + 4:].strip()
 
-            print(html)
+            #print(html)
             parser = customHTML()
             parser.feed(html)  # Call feed method to start parsing
-            return [200, 0]
+            return parser.getUnseen()
         
-        elif str(response_code).startswith('4'):
+        elif response_code.startswith('4'):
             print("You SUCK!!\n\n")
             sys.exit(0)
 
@@ -136,7 +141,19 @@ class Crawler:
 
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
-    uncrawled = []
+    paths = [] # (Path, Boolean) True --> Path has been seen, False --> Path has not been seen
+    flags = []
+    flag_found = False
+
+    '''
+    Returns an unseen path for the crawler to visit next and
+    then sets the seen status to True because it has been visited
+    '''
+    def getUnseen(self):
+        for path in self.paths:
+            if path[1] == False:
+                path[1] = True
+                return path[0]
 
     '''
     Look for start tags
@@ -145,21 +162,62 @@ class customHTML(HTMLParser):
     will have base case for if everything is empty 
     '''
     def handle_starttag(self, tag, attrs):
-        print("Encountered a start tag:", tag)
-
-
-    '''
-    We have reached the end of the tag so move on somehow and then recall handleState
-    '''
-    def handle_endtag(self, tag):
-        print("Encountered an end tag :", tag)
+        #print('Ecountered start ', tag)
+        if tag == 'a':  # Check if the tag is an anchor tag
+            for attr in attrs: # loop through all of the paths found
+                if attr[0] == 'href':
+                    paths = {path for path, seen in self.paths}
+                    if attr[1] not in paths: # Path has not been encountered, add it to the list
+                        #print(f'New Path {attr[1]}')
+                        if self.validURL(attr[1]):
+                            self.paths.append([attr[1], False])  # Append the URL to the list of URLs
+                            print('Added new route. Current Paths and Status: ', self.paths)
+                        else:
+                            #print(f'Bad URL {attr[1]} ... Ignoring')
+                            continue
+                    else:
+                        #print(f'Already seen {attr[1]}... Ignoring')
+                        continue
+                            
+        if tag == 'h3':
+            for attr in attrs:
+                if attr[0] == 'class' and 'secret_flag' in attr[1]:
+                    self.flag_found = True
+                    print("I FOUND A FLAG")
 
     '''
     To be called inside the state tag
     Based on which function mpping it should do something 
     '''
     def handle_data(self, data):
-        print("Encountered some data  :", data)
+        #print("Encountered some data  :", data)
+        if self.flag_found == True:
+            self.flag_content += data.strip()
+            flags.append(self.flag_content)
+            print(f'I ADDED THE FLAG {flag_content}')
+            flag_found = False # set back to false so you can find the next one
+            
+    
+    '''
+        Returns true if the URL is valid and the path should be crawled.
+        Returns false otherwise
+    '''
+    def validURL(self, url):
+        parsed = urllib.parse.urlparse(url).netloc.strip()
+        base = urllib.parse.urlparse("https://www.3700.network").netloc
+        if parsed != "":
+            #print(f'Comparison: {base} and {parsed}, {base == parsed}')
+            return base == parsed
+        else:
+            return True
+            
+
+    '''
+    We have reached the end of the tag so move on somehow and then recall handleState
+    '''
+    def handle_endtag(self, tag):
+        #print("Encountered an end tag :", tag)
+        pass
 
     
     '''
@@ -174,6 +232,8 @@ class customHTML(HTMLParser):
     '''
     def sendPost(self):
         pass
+
+    
 
 
     ##Send 
