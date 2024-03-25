@@ -153,15 +153,22 @@ class Crawler:
         self.middleware = parser.crsfMiddleware
         if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
             #Should work on the path list from the parser
+            
+            
             print("|IN THIS|")
             pathList = parser.paths
             print("PATHS ARE ")
-            print(parser.paths)
             for path in pathList:
+                if path[0] == '/accounts/logout/':
+                    path[1] = True
+            for path in pathList:
+                print(parser.paths)
                 if path[1] == True:
                     pass
                     #Skip because we have already checked 
-                else: #We haven't checked it 
+                else: #We haven't checked it
+                    self.next = parser.next
+                    self.middleware = parser.crsfMiddleware
                     path[1] = True
                     sock = self.sockInit()
                     sock.connect((self.server, self.port))
@@ -169,6 +176,7 @@ class Crawler:
                     print("This request is " + str(request))
                     sock.send(request.encode('ascii'))
                     data = self.receive_message(sock)
+                    
                     print(data)
             print("AT THE END")
             return 
