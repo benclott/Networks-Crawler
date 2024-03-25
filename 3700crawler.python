@@ -22,9 +22,10 @@ class Crawler:
 
     #The cookies for this; they will in theory update every time so update at the start of each 200 or 302
     sessionId = '' #The sessionId cookie for this run provided from the first response
-    csrfToken = '' #The csrf token for this run provided from the first response
-    next  = ''
-    middleware = '' #The middleware 
+    csrftoken = '' #The csrf token for this run provided from the first response
+    next = ''
+    middleware = '' #The middleware
+    needCookies = False
 
     def run(self):
         count = 0
@@ -32,14 +33,14 @@ class Crawler:
         mysocket = self.sockInit()
         mysocket.connect((self.server, self.port))
         while(1):
-            print("\nStarting Loop at line35 \n")
             request = self.getPath(data)
-            print("\nThe Request is " + str(request))
+            print("REQUEST:\n" + str(request))
             mysocket.send(request.encode('ascii'))
 
             #data = self.receive_message(mysocket)
             data = mysocket.recv(1000000).decode('ascii')
-            print("Response:\n%s" % data)
+            print('RESPONSE: Recieved')
+            #print(f'RESPONSE: \n{data}')
 
     #Handle the work of the socket and wrapping so it's out of main
     ##return a socket
@@ -77,9 +78,9 @@ class Crawler:
     def getPath(self, data):
         root = "/fakebook/"
         if data == '':
-            return self.createGet(root, False)
+            print('First Iteration... Requesting root.')
+            return self.createGet(root, self.needCookies)
         else:
-
             #Compile the data that we have into usable information 
             brokenData = data.split("\n")
             responseCode = brokenData[0].split(' ')[1]
@@ -89,16 +90,13 @@ class Crawler:
             self.csrfToken = self.getCSRF(header)
             html = data[header_end_index + 4:].strip()
 
+            print(f'Handling: {responseCode}')
             if responseCode == '200':
-                print("\nHandling 200 Request\n")
-                print("html Response was \n" + str(html) + "\n")
+                self.needCookies = True
                 return self.handle200(html, parser)
             elif responseCode == '302':
-                print("\nHandling 302 Request\n")
-                print("HTTP Response was \n" + str(header) + "\n")
                 return self.handle302(brokenData)
             elif responseCode.startswith('4'):
-                print("\nWe got a 400 error\n")
                 print(data)
                 sys.exit(0)
         
@@ -130,8 +128,8 @@ class Crawler:
     Should just take the new path provided in the http response and send a get request to load the new page
     '''
     def handle302(self, httpResponse):
-        print("\nHandling 302 Request MEthod\n")
         redirectedPath = httpResponse[4].split(" ")[1].strip() # Extract the path from the response
+        print(f'302 Redirecting to: {redirectedPath}')
         return self.createGet(redirectedPath, False) # Return path that the server redirects us to
 
     '''
@@ -144,11 +142,13 @@ class Crawler:
     Boolean: True if we need to include the sessionID and CSRF and false if we should not
     '''
     def createGet(self, path, needCookies):
-        print(f'Sending a Get request, cookies are include = {needCookies}\n')
+        print(f'Creating GET. Include Cookies = {needCookies}')
         if needCookies: #We need cookies so include the sessionID and CSRF
-            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: sessionId={}; csrftoken={}\r\n'.format(path, self.server, self.port, self.sessionId, self.csrfToken)
+            #return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: sessionId={}; csrftoken={}\r\n'.format(path, self.server, self.port, self.sessionId, self.csrfToken)
+            return f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nCookie: csrftoken={self.csrfToken}; sessionid={self.sessionId}\r\n'
         else: #We do not need cookie so send a basic Get
-            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
+            #return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
+            return f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
 
     def getSessionId(self, header):
         # Look for the start index of "sessionid="
@@ -203,8 +203,6 @@ class Crawler:
         else:
             return (s, p)
 
-
-
     def createPost(self, path):
         httptype = "HTTP/1.0"
         #("csrf is" + str(self.csrf))
@@ -249,7 +247,7 @@ class customHTML(HTMLParser):
             self.handleSecrets(attrs)
         elif tag == 'form': #We have found a form tag and may need to send a Post or Get to submit a form
             self.inForm = True
-            self.method = attrs.get('method', 'get').lower() #If we find a post then we will send that otherwise default to get
+            self.method = attrs.get('method', 'get').lower() # If we find a post then we will send that otherwise default to get
         elif tag == 'input' and self.inForm: #We have found input tags in a form to collect data from
             self.handleForm(tag, attrs)
         pass
