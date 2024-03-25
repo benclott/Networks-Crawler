@@ -25,64 +25,84 @@ class Crawler:
     csrfToken = '' #The csrf token for this run provided from the first response
     next  = ''
     middleware = '' #The middleware 
+    needCookies = False
 
     def run(self):
         count = 0
         data = '' ##Store the data of the message
-        mysocket = self.sockInit()
-        mysocket.connect((self.server, self.port))
+        
         while(1):
-            print("\nStarting Loop at line35 \n")
+            sock = self.sockInit()
+            sock.connect((self.server, self.port))
+            print("\nStarting Loop at line 35, this is go around: " + str(count) + "\n")
             request = self.getPath(data)
-            print("\nThe Request is " + str(request))
-            mysocket.send(request.encode('ascii'))
-
-            #data = self.receive_message(mysocket)
-            data = self.receive_message(mysocket)#mysocket.recv(1000000).decode('ascii')
-            print("Response:\n%s" % data)
+            print("\nThe Request is\n" + str(request))
+            sock.send(request.encode('ascii'))
+            data = self.receive_message(sock)#
+            #data = sock.recv(10000000).decode('ascii')
+            #print("Response:\n%s" % data)
+            count = count + 1
+            sock.close()
 
     #Handle the work of the socket and wrapping so it's out of main
     ##return a socket
     def sockInit(self):
-        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_context = ssl.create_default_context()
-        mysocket = ssl_context.wrap_socket(mysocket, server_hostname=self.server)
-        return mysocket
-
-    #Received the message and deals with exterior crap
+        sock = ssl_context.wrap_socket(sock, server_hostname=self.server)
+        return sock
+   
     def receive_message(self, sock):
-        response = b""
-        while True:
-            data = sock.recv(1000000)
+            # Read HTTP headers first
+        response_headers = b""
+        while not response_headers.endswith(b"\r\n\r\n"):
+            data = sock.recv(1)  # Read one byte at a time to get headers
             if not data:
-                break
-            response += data
+                break  # Connection closed
+            response_headers += data
+        
+        headers = response_headers.decode('utf-8')
+        print("Headers:\n", headers)
+        
+        # Check if the response is chunked
+        if 'transfer-encoding: chunked' in headers.lower():
+            response_body = self.read_chunked_body(sock)
+        else:
+            # If not chunked, use Content-Length to read the response body
+            content_length = self.get_content_length(headers)
+            response_body = b""
+            if content_length:
+                while len(response_body) < content_length:
+                    data = sock.recv(content_length - len(response_body))
+                    if not data:
+                        break  # Connection closed
+                    response_body += data
 
-            # check if we've received the full HTTP response
-            if b"\r\n\r\n" in response:
-                headers, body = response.split(b"\r\n\r\n", 1)
-                header_lines = headers.decode("ascii").split("\r\n")
-                content_length = None
-                for line in header_lines:
-                    if line.startswith("Content-Length:"):
-                        content_length = int(line.split(":")[1].strip())
-                        break
+        print("Body:\n", response_body.decode('utf-8'))
+        return headers + "\n" + response_body.decode('utf-8')
 
-                if content_length is not None and len(body) < content_length:
-                    # we need to receive more bytes of the body
-                    remaining_bytes = content_length - len(body)
-                    while remaining_bytes > 0:
-                        data = sock.recv(min(remaining_bytes, 1000000))
-                        if not data:
-                            break
-                        response += data
-                        body += data
-                        remaining_bytes -= len(data)
+    def get_content_length(self, headers):
+        for line in headers.split('\r\n'):
+            if line.lower().startswith('content-length:'):
+                return int(line.split(":")[1].strip())
+        return None
 
-                # we have received the full HTTP response
-                break
-
-        return response.decode("utf-8")
+    def read_chunked_body(self, sock):
+        body = b""
+        while True:
+            chunk_size_str = b""
+            char = b""
+            while char != b"\r\n":
+                char = sock.recv(2)
+                if char == b"\r\n": break
+                chunk_size_str += char
+            chunk_size = int(chunk_size_str.split(b";")[0], 16)
+            if chunk_size == 0:
+                break  # End of chunks
+            chunk = sock.recv(chunk_size)
+            sock.recv(2)  # Consume trailing \r\n of the chunk
+            body += chunk
+        return body
 
     '''
     Method to handle the response of the server
@@ -93,7 +113,7 @@ class Crawler:
     def getPath(self, data):
         root = "/fakebook/"
         if data == '':
-            return self.createGet(root, False)
+            return self.createGet(root, self.needCookies)
         else:
 
             #Compile the data that we have into usable information 
@@ -107,11 +127,10 @@ class Crawler:
 
             if responseCode == '200':
                 print("\nHandling 200 Request\n")
-                print("html Response was \n" + str(html) + "\n")
+                self.needCookies = True
                 return self.handle200(html, parser)
             elif responseCode == '302':
-                print("\nHandling 302 Request\n")
-                print("HTTP Response was \n" + str(header) + "\n")
+                print("\nHandling 302 Request")
                 return self.handle302(brokenData)
             elif responseCode.startswith('4'):
                 print("\nWe got a 400 error\n")
@@ -134,7 +153,24 @@ class Crawler:
         self.middleware = parser.crsfMiddleware
         if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
             #Should work on the path list from the parser
-            print("We arein this part")
+            print("|IN THIS|")
+            pathList = parser.paths
+            print("PATHS ARE ")
+            print(parser.paths)
+            for path in pathList:
+                if path[1] == True:
+                    pass
+                    #Skip because we have already checked 
+                else: #We haven't checked it 
+                    path[1] = True
+                    sock = self.sockInit()
+                    sock.connect((self.server, self.port))
+                    request = self.createGet(path[0], True)
+                    print("This request is " + str(request))
+                    sock.send(request.encode('ascii'))
+                    data = self.receive_message(sock)
+                    print(data)
+            print("AT THE END")
             return 
         else: #We need to send a post request so that we can login
             return self.createPost("/accounts/login/")
@@ -146,9 +182,9 @@ class Crawler:
     Should just take the new path provided in the http response and send a get request to load the new page
     '''
     def handle302(self, httpResponse):
-        print("\nHandling 302 Request MEthod\n")
+        print("\nIn 302 method")
         redirectedPath = httpResponse[4].split(" ")[1].strip() # Extract the path from the response
-        return self.createGet(redirectedPath, False) # Return path that the server redirects us to
+        return self.createGet(redirectedPath, self.needCookies) # Return path that the server redirects us to
 
     '''
     Create a get request
@@ -162,9 +198,9 @@ class Crawler:
     def createGet(self, path, needCookies):
         print(f'Sending a Get request, cookies are include = {needCookies}\n')
         if needCookies: #We need cookies so include the sessionID and CSRF
-            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: sessionId={}; csrftoken={}\r\n'.format(path, self.server, self.port, self.sessionId, self.csrfToken)
+            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: closed\r\nCookie: csrftoken={}; sessionid={}\r\n\r\n'.format(path, self.server, self.port, self.csrfToken, self.sessionId)
         else: #We do not need cookie so send a basic Get
-            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
+            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: closed\r\n\r\n'.format(path, self.server, self.port)
 
     def getSessionId(self, header):
         # Look for the start index of "sessionid="
@@ -219,8 +255,6 @@ class Crawler:
         else:
             return (s, p)
 
-
-
     def createPost(self, path):
         httptype = "HTTP/1.0"
         #("csrf is" + str(self.csrf))
@@ -228,11 +262,11 @@ class Crawler:
             body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={self.middleware}&next='
             headers = """Content-Type: application/x-www-form-urlencoded\nContent-Length: {}\nCookie: csrftoken={}; sessionid={}""".format(len(body), self.csrfToken,self.sessionId)
 
-            request = 'POST {} HTTP/1.0\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
+            request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
             path, self.server, self.port, headers, body)
         else:
             ##need to pull the headers and body from somewhere else
-            request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
+            request = 'POST {} HTTP/1.\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
             path, self.server, self.port, headers, body)
         return request
 
@@ -323,13 +357,16 @@ class customHTML(HTMLParser):
         Returns false otherwise
     '''
     def validURL(self, url):
-        parsed = urllib.parse.urlparse(url).netloc.strip() # extract netloc from the URL we found
-        base = urllib.parse.urlparse("https://www.3700.network").netloc # this is our target domains netloc
-        if parsed != "":
-            #print(f'Comparison: {base} and {parsed}, {base == parsed}')
-            return base == parsed
-        else:
-            return True
+        # Assume base_url is the root URL of your target website
+        base_url = "https://www.3700.network"
+        base_netloc = urllib.parse.urlparse(base_url).netloc
+
+        # Fully resolve relative URLs against the base_url
+        full_url = urllib.parse.urljoin(base_url, url)
+        parsed = urllib.parse.urlparse(full_url)
+
+        # Now, parsed contains the full URL. You can check its netloc against your base netloc
+        return parsed.netloc == base_netloc and parsed.scheme in ["http", "https"]
     '''
     We have reached the end of the tag so move on somehow and then recall handleState
     '''
