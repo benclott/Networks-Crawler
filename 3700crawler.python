@@ -24,6 +24,7 @@ class Crawler:
     sessionId = '' #The sessionId cookie for this run provided from the first response
     csrfToken = '' #The csrf token for this run provided from the first response
     next  = ''
+    middleware = '' #The middleware 
 
     def run(self):
         count = 0
@@ -31,14 +32,14 @@ class Crawler:
         mysocket = self.sockInit()
         mysocket.connect((self.server, self.port))
         while(1):
-            print("\nStarting Loop at line32 \n")
+            print("\nStarting Loop at line35 \n")
             request = self.getPath(data)
             print("\nThe Request is " + str(request))
             mysocket.send(request.encode('ascii'))
 
             #data = self.receive_message(mysocket)
             data = mysocket.recv(1000000).decode('ascii')
-            #print("Response:\n%s" % data)
+            print("Response:\n%s" % data)
 
     #Handle the work of the socket and wrapping so it's out of main
     ##return a socket
@@ -90,7 +91,7 @@ class Crawler:
 
             if responseCode == '200':
                 print("\nHandling 200 Request\n")
-                print("HTTP Response was \n" + str(header) + "\n")
+                print("html Response was \n" + str(html) + "\n")
                 return self.handle200(html, parser)
             elif responseCode == '302':
                 print("\nHandling 302 Request\n")
@@ -111,12 +112,14 @@ class Crawler:
     '''
     def handle200(self, html, parser):
         parser = customHTML()
-        print("\nWe are now handling a 200, the html is \n" + str(html))
+        #print("\nWe are now handling a 200, the html is \n" + str(html))
         parser.feed(html)
         self.next = parser.next
+        self.middleware = parser.crsfMiddleware
         if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
             #Should work on the path list from the parser
-            pass
+            print("We arein this part")
+            return 
         else: #We need to send a post request so that we can login
             return self.createPost("/accounts/login/")
 
@@ -203,21 +206,18 @@ class Crawler:
 
 
     def createPost(self, path):
-        httptype = "HTTP/1.1"
+        httptype = "HTTP/1.0"
         #("csrf is" + str(self.csrf))
-        if path == '/accounts/login/?next=/fakebook/':
-            body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrf}&next={self.next}'
-            headers = """Content-Type: application/x-www-form-urlencoded\nContent-Length: {}\nCookie: sessionid={}; csrftoken={}""".format(len(body), self.sessionid,self.csrfToken)
+        if path == '/accounts/login/':
+            body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={self.middleware}&next='
+            headers = """Content-Type: application/x-www-form-urlencoded\nContent-Length: {}\nCookie: csrftoken={}; sessionid={}""".format(len(body), self.csrfToken,self.sessionId)
 
-            request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
+            request = 'POST {} HTTP/1.0\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
             path, self.server, self.port, headers, body)
         else:
             ##need to pull the headers and body from somewhere else
             request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
             path, self.server, self.port, headers, body)
-        print("REQUEST IS + ")
-        print(request)
-        print("ENDING\n")
         return request
 
 '''Create a custom HTML class that will identify and handle each problem'''
@@ -242,7 +242,6 @@ class customHTML(HTMLParser):
     will have base case for if everything is empty 
     '''
     def handle_starttag(self, tag, attrs):
-        print("TAGS ARE BEING HANDLED")
         attrs = dict(attrs) #Create a dictionarry of the attributes and reset what attrs is so we can easily manipulate without massive iteration
         if tag == 'a': #If the tag is an anchor tag we may have to go to a link on the page
             self.handleLinks(attrs) 
