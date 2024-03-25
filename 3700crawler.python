@@ -6,6 +6,7 @@ import ssl
 from html.parser import HTMLParser
 import time
 import sys
+import urllib.parse
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
@@ -16,36 +17,28 @@ class Crawler:
         self.port = args.port
         self.username = args.username
         self.password = args.password
-    routes = []
+    
+    checkedPaths = [] #A list of tuples of checked paths
+
+    #The cookies for this; they will in theory update every time so update at the start of each 200 or 302
+    sessionId = '' #The sessionId cookie for this run provided from the first response
+    csrfToken = '' #The csrf token for this run provided from the first response
+    next  = ''
 
     def run(self):
         count = 0
         data = '' ##Store the data of the message
         mysocket = self.sockInit()
         mysocket.connect((self.server, self.port))
-        while(count <= 2):
-            path = ""
-            if count == 0:
-                #Wee need to send the first message
-                path = self.getPath(data)#new path 
-                request = self.createHTML(path[0])
-                self.routes.append(path[0])
-                count = count + 1
-            else:
-                #We have already gotten one message at least so send based on what the new information is
-                path = self.getPath(data)#new path 
-                if path[0] == "200":
-                    request = path[1]
-                else:
-                    request = self.createHTML(path[0])
-                    self.routes.append(path[0])
-                    count = count + 1
-
+        while(1):
+            print("\nStarting Loop at line32 \n")
+            request = self.getPath(data)
+            print("\nThe Request is " + str(request))
             mysocket.send(request.encode('ascii'))
 
             #data = self.receive_message(mysocket)
             data = mysocket.recv(1000000).decode('ascii')
-            #print("Response:\n%s" % data.decode('ascii'))
+            #print("Response:\n%s" % data)
 
     #Handle the work of the socket and wrapping so it's out of main
     ##return a socket
@@ -83,25 +76,118 @@ class Crawler:
     def getPath(self, data):
         root = "/fakebook/"
         if data == '':
-            return [root, 0]
-        brokenData = data.split("\n")
-        htmlNumber = int(brokenData[0].split(' ')[1])
-        if htmlNumber == 200:
-            print(htmlNumber)
-            print(data)
-            parser = customHTML()
-            parser.feed(data)
-            return ["200", parser.sendPost()]
-        elif htmlNumber == 302:
-            print(htmlNumber)
-            print(data)
-            #We have been redirected
-            redirectedPath = brokenData[4].split(" ")[1].strip()
-            return [redirectedPath, 0]
-        elif htmlNumber == 400:
-            print("You SUCK!!\n\n")
-            sys.exit(0)
+            return self.createGet(root, False)
+        else:
 
+            #Compile the data that we have into usable information 
+            brokenData = data.split("\n")
+            responseCode = brokenData[0].split(' ')[1]
+            header_end_index = data.find('\r\n\r\n')
+            header = data[:header_end_index]
+            self.sessionId = self.getSessionId(header)
+            self.csrfToken = self.getCSRF(header)
+            html = data[header_end_index + 4:].strip()
+
+            if responseCode == '200':
+                print("\nHandling 200 Request\n")
+                print("HTTP Response was \n" + str(header) + "\n")
+                return self.handle200(html, parser)
+            elif responseCode == '302':
+                print("\nHandling 302 Request\n")
+                print("HTTP Response was \n" + str(header) + "\n")
+                return self.handle302(brokenData)
+            elif responseCode.startswith('4'):
+                print("\nWe got a 400 error\n")
+                print(data)
+                sys.exit(0)
+        
+
+    '''
+    Method to handle if we got a 200 response from the webpage
+    This indicates that the webpage is loaded or the form sent was loaded correctly
+
+    Handle Data from the html here and then dispatch
+    
+    '''
+    def handle200(self, html, parser):
+        parser = customHTML()
+        print("\nWe are now handling a 200, the html is \n" + str(html))
+        parser.feed(html)
+        self.next = parser.next
+        if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
+            #Should work on the path list from the parser
+            pass
+        else: #We need to send a post request so that we can login
+            return self.createPost("/accounts/login/")
+
+        #return #Figure out to make this return something depending on the necessary request
+
+    '''
+    Method to handle if we get a redirect
+    Should just take the new path provided in the http response and send a get request to load the new page
+    '''
+    def handle302(self, httpResponse):
+        print("\nHandling 302 Request MEthod\n")
+        redirectedPath = httpResponse[4].split(" ")[1].strip() # Extract the path from the response
+        return self.createGet(redirectedPath, False) # Return path that the server redirects us to
+
+    '''
+    Create a get request
+    Should just be the same except for a given path that changes each time
+
+    path boolean -> request
+
+    Path: The path to send the request to
+    Boolean: True if we need to include the sessionID and CSRF and false if we should not
+    '''
+    def createGet(self, path, needCookies):
+        print(f'Sending a Get request, cookies are include = {needCookies}\n')
+        if needCookies: #We need cookies so include the sessionID and CSRF
+            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: sessionId={}; csrftoken={}\r\n'.format(path, self.server, self.port, self.sessionId, self.csrfToken)
+        else: #We do not need cookie so send a basic Get
+            return 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
+
+    def getSessionId(self, header):
+        # Look for the start index of "sessionid="
+        start_index = header.find("sessionid=")
+        if start_index == -1:
+            # If "sessionid=" is not found, return None or an appropriate value
+            return None
+        
+        # Add the length of "sessionid=" to the start index to find where the session ID starts
+        start_index += len("sessionid=")
+        
+        # Assume the session ID ends at the next semicolon or the end of the string if no semicolon is found
+        end_index = header.find(";", start_index)
+        if end_index == -1:
+            # If no semicolon is found, the session ID goes until the end of the string
+            end_index = len(header)
+
+        
+        
+        # Extract and return the session ID
+        return header[start_index:end_index]
+    
+    def getCSRF(self, header):
+        # Look for the start index of "sessionid="
+        start_index = header.find("csrftoken=")
+        if start_index == -1:
+            # If "sessionid=" is not found, return None or an appropriate value
+            return None
+        
+        # Add the length of "sessionid=" to the start index to find where the session ID starts
+        start_index += len("sessionid=")
+        
+        # Assume the session ID ends at the next semicolon or the end of the string if no semicolon is found
+        end_index = header.find(";", start_index)
+        if end_index == -1:
+            # If no semicolon is found, the session ID goes until the end of the string
+            end_index = len(header)
+
+        
+        
+        # Extract and return the session ID
+        return header[start_index:end_index]
 
     #Method to decide which server/host to send the website too
     def sendto(self):
@@ -114,15 +200,40 @@ class Crawler:
         else:
             return (s, p)
 
-    def createHTML(self, path):
-        httptype = "HTTP/1.1"
-        #request = f'GET {} {}\r\nHost: {}:{}\r\nAccept-Encoding: identity\r\n\r\n'.format(path, httptype, self.server, self.port)
-        request = 'GET {} HTTP/1.1\r\nHost: {}:{}\r\n\r\n'.format(path, self.server, self.port)
-        return request
 
+
+    def createPost(self, path):
+        httptype = "HTTP/1.1"
+        #("csrf is" + str(self.csrf))
+        if path == '/accounts/login/?next=/fakebook/':
+            body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrf}&next={self.next}'
+            headers = """Content-Type: application/x-www-form-urlencoded\nContent-Length: {}\nCookie: sessionid={}; csrftoken={}""".format(len(body), self.sessionid,self.csrfToken)
+
+            request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
+            path, self.server, self.port, headers, body)
+        else:
+            ##need to pull the headers and body from somewhere else
+            request = 'POST {} HTTP/1.1\r\nHost: {}:{}\r\n{}\r\n\r\n{}'.format(
+            path, self.server, self.port, headers, body)
+        print("REQUEST IS + ")
+        print(request)
+        print("ENDING\n")
+        return request
 
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.paths = [] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+        self.flags = [] # If we find flags in html store them here
+        self.flag_found = False # If current page finds a flag this becomes true
+        self.crsfMiddleware = '' #The middleware token -> bad naming
+        self.userRequest = False #Are we looking for a username
+        self.passRequest = False #Are we looking for a password
+        self.inForm = False #Boolean to store if we are in a form. used to then parse further tags 
+        # = '' #Session id cookie pulled from the first request
+        self.next = '' #The next which is required value for the path if logging 
+        self.method = "GET"
 
     '''
     Look for start tags
@@ -130,9 +241,80 @@ class customHTML(HTMLParser):
     Figure out the start tag and then call the necessary next function
     will have base case for if everything is empty 
     '''
-    def handleState(self, tag, attrs):
+    def handle_starttag(self, tag, attrs):
+        print("TAGS ARE BEING HANDLED")
+        attrs = dict(attrs) #Create a dictionarry of the attributes and reset what attrs is so we can easily manipulate without massive iteration
+        if tag == 'a': #If the tag is an anchor tag we may have to go to a link on the page
+            self.handleLinks(attrs) 
+        elif tag == 'h3': #We are in a secret
+            self.handleSecrets(attrs)
+        elif tag == 'form': #We have found a form tag and may need to send a Post or Get to submit a form
+            self.inForm = True
+            self.method = attrs.get('method', 'get').lower() #If we find a post then we will send that otherwise default to get
+        elif tag == 'input' and self.inForm: #We have found input tags in a form to collect data from
+            self.handleForm(tag, attrs)
         pass
 
+    '''
+    Handle Links = Extract the links from the html so we can know where to go next
+    Saves everything to the class global var
+    attributes -> None
+    '''
+    def handleLinks(self, attrs):
+        href = attrs.get('href')
+        if href and self.validURL(href):
+            paths = {path for path, seen in self.paths}
+            if href not in paths:
+                self.paths.append([href, False])
+    
+    '''
+    Handle secrets -> Add any flags that we find to the list of found flags and pretty much do nothing else
+
+    attributes -> none
+    '''
+    def handleSecrets(self, attrs):
+        if attrs.get('class') == 'secret_flag':
+            self.flag_found = True
+            print("I FOUND A FLAG")
+
+
+    '''
+    We need to handle inputs from a form to get important information like the csrfmiddleware token and if we need to actually send a post or a get
+
+    attrs -> nothing
+
+    Alters:
+    userFound, passFound, sendPostNext (method), csrfMiddleWareToken, next
+    '''
+    def handleForm(self, tag, attrs):
+        dict_attrs = dict(attrs)
+        input_type = dict_attrs.get("type")
+        input_name = dict_attrs.get("name")
+        # Check for username field
+        if input_type == "text" and input_name == "username":
+            self.userRequest = True
+        # Check for password field
+        elif input_type == "password" and input_name == "password":
+            self.passRequest = True
+        # Extract CSRF token if present
+        elif input_type == "hidden" and input_name == "csrfmiddlewaretoken":
+            self.crsfMiddleware = dict_attrs.get("value")
+        elif input_type == "hidden" and input_name == "next":
+            self.next = dict_attrs.get("value")
+
+
+    '''
+        Returns true if the URL is valid and the path should be crawled.
+        Returns false otherwise
+    '''
+    def validURL(self, url):
+        parsed = urllib.parse.urlparse(url).netloc.strip() # extract netloc from the URL we found
+        base = urllib.parse.urlparse("https://www.3700.network").netloc # this is our target domains netloc
+        if parsed != "":
+            #print(f'Comparison: {base} and {parsed}, {base == parsed}')
+            return base == parsed
+        else:
+            return True
     '''
     We have reached the end of the tag so move on somehow and then recall handleState
     '''
@@ -144,27 +326,13 @@ class customHTML(HTMLParser):
     Based on which function mpping it should do something 
     '''
     def handle_data(self, data):
-        pass
-
-    
-    '''
-    Method to build a post request with the provided dat from class
-    
-    1. Take in all day
-    2. Create a string of all necessary tags 
-
-    The idea is that this will send a post, then we will skip the sending of a get
-    After that we will read and start over
-
-    Should return a path to a post message
-    
-    '''
-    def sendPost(self):
-        pass
+        if self.flag_found == True:
+            self.flag_content += data.strip()
+            self.flags.append(self.flag_content)
+            print(f'I ADDED THE FLAG {self.flag_content}')
+            flag_found = False # set back to false so you can find the next one
 
 
-
-    ##Send 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
     parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
