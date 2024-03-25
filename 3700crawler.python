@@ -38,7 +38,7 @@ class Crawler:
             mysocket.send(request.encode('ascii'))
 
             #data = self.receive_message(mysocket)
-            data = mysocket.recv(1000000).decode('ascii')
+            data = self.receive_message(mysocket)#mysocket.recv(1000000).decode('ascii')
             print("Response:\n%s" % data)
 
     #Handle the work of the socket and wrapping so it's out of main
@@ -51,22 +51,38 @@ class Crawler:
 
     #Received the message and deals with exterior crap
     def receive_message(self, sock):
-        #Empty buffer
-        response = ""
-        while(True):
-            try:
-                data = sock.recv(4096)
-            except sock.TimeoutError:
+        response = b""
+        while True:
+            data = sock.recv(1000000)
+            if not data:
                 break
-        
-            #We are at the end of the json
-            if(data == b'\n'):
+            response += data
+
+            # check if we've received the full HTTP response
+            if b"\r\n\r\n" in response:
+                headers, body = response.split(b"\r\n\r\n", 1)
+                header_lines = headers.decode("ascii").split("\r\n")
+                content_length = None
+                for line in header_lines:
+                    if line.startswith("Content-Length:"):
+                        content_length = int(line.split(":")[1].strip())
+                        break
+
+                if content_length is not None and len(body) < content_length:
+                    # we need to receive more bytes of the body
+                    remaining_bytes = content_length - len(body)
+                    while remaining_bytes > 0:
+                        data = sock.recv(min(remaining_bytes, 1000000))
+                        if not data:
+                            break
+                        response += data
+                        body += data
+                        remaining_bytes -= len(data)
+
+                # we have received the full HTTP response
                 break
-            #We are at the end of anything to be read
-            if(data == b''):
-                break
-            response += data.decode('ascii')
-        return response
+
+        return response.decode("utf-8")
 
     '''
     Method to handle the response of the server
