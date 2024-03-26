@@ -49,12 +49,13 @@ class Crawler:
                         print("Error: Request is None.")
                 except AttributeError as e:
                     print(f"Error: {e}")
+                    sys.exit(1)
 
             data = self.receive_message(mysocket)
             #print("RRESPONSE RECIEVED: ", data)
-            self.PAGES_SEARCHED = self.PAGES_SEARCHED + 1
-            if self.PAGES_SEARCHED % 100 == 0:
-                print(f'Searched {self.PAGES_SEARCHED} pages')
+            # self.PAGES_SEARCHED = self.PAGES_SEARCHED + 1
+            # if self.PAGES_SEARCHED % 100 == 0:
+            #     print(f'Searched {self.PAGES_SEARCHED} pages')
 
 
 
@@ -328,13 +329,13 @@ class customHTML(HTMLParser):
         if self.flag_found:
             flag_content = data.strip().split(': ')[1]
             self.flags.append(flag_content)
-            print(f'Flag {len(self.flags)} Found')
-            print("Extracted flag:", flag_content)
+            #print(f'Flag {len(self.flags)} Found')
+            print(flag_content) #"Extracted flag:", 
             self.flag_found = False
         if len(self.flags) == 5:
-            print('All 5 Flags Found')
-            for x in self.flags:
-                print(x)
+            #print('All 5 Flags Found')
+            # for x in self.flags:
+            #     print(x)
             sys.exit(0)
 
 
