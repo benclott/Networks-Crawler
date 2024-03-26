@@ -26,6 +26,7 @@ class Crawler:
         self.csrftoken = ''
         self.needCookies = False
         self.count_of_requests = 0 
+        self.PAGES_SEARCHED = 0
 
 
 
@@ -51,6 +52,9 @@ class Crawler:
 
             data = self.receive_message(mysocket)
             #print("RRESPONSE RECIEVED: ", data)
+            self.PAGES_SEARCHED = self.PAGES_SEARCHED + 1
+            if self.PAGES_SEARCHED % 100 == 0:
+                print(f'Searched {self.PAGES_SEARCHED} pages')
 
 
 
@@ -153,7 +157,7 @@ class Crawler:
         Only include cookies if specified.
     '''
     def createGet(self, path, cookies):
-        print(f'Marking {path} as seen.')
+        #print(f'Marking {path} as seen.')
         #ALL_PATHS[path] = ALL_PATHS.get(path, True)
         ALL_PATHS[path] = True
         if not cookies:
@@ -296,13 +300,13 @@ class customHTML(HTMLParser):
     '''
     def handleForm(self, tag, attrs):
         dict_attrs = dict(attrs)
-        print(f'[in handleForm] Attributes: {dict_attrs}')
+        #print(f'[in handleForm] Attributes: {dict_attrs}')
         input_type = dict_attrs.get("type")
         input_name = dict_attrs.get("name")
         # Extract CSRF token if present
         if input_type == "hidden" and input_name == "csrfmiddlewaretoken":
             self.csrfmiddlewaretoken = dict_attrs['value']
-            print(f'Found Middleware: {self.csrfmiddlewaretoken}')
+            #print(f'Found Middleware: {self.csrfmiddlewaretoken}')
         elif input_type == "hidden" and input_name == "next":
             self.next_specified = dict_attrs.get("value")
 
@@ -323,9 +327,9 @@ class customHTML(HTMLParser):
     def handle_data(self, data):
         if self.flag_found:
             flag_content = data.strip().split(': ')[1]
-            print("\n\nExtracted flag:", flag_content)
             self.flags.append(flag_content)
-            print(f'Flag {len(self.flags)} Found\n\n')
+            print(f'Flag {len(self.flags)} Found')
+            print("Extracted flag:", flag_content)
             self.flag_found = False
         if len(self.flags) == 5:
             for x in self.flags:
