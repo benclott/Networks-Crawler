@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#hello
 
 import argparse
 import socket
@@ -162,9 +161,9 @@ class Crawler:
         #ALL_PATHS[path] = ALL_PATHS.get(path, True)
         ALL_PATHS[path] = True
         if not cookies:
-            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
+            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nConnection: closed\r\n\r\n'
         else:
-            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
+            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nConnection: closed\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
 
         return request
     '''
@@ -366,5 +365,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     sender = Crawler(args)
     sender.run()
-
-
