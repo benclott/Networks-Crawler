@@ -333,6 +333,7 @@ class customHTML(HTMLParser):
             print("Extracted flag:", flag_content)
             self.flag_found = False
         if len(self.flags) == 5:
+            print('All 5 Flags Found')
             for x in self.flags:
                 print(x)
             sys.exit(0)
