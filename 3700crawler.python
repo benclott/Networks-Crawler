@@ -10,6 +10,7 @@ import urllib.parse
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
+ALL_PATHS = [] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
 
 class Crawler:
     def __init__(self, args):
@@ -45,7 +46,7 @@ class Crawler:
             #print("Response:\n%s" % data)
             count = count + 1
             sock.close()
-
+        print('END OF RUN WHILE LOOP')
     #Handle the work of the socket and wrapping so it's out of main
     ##return a socket
     def sockInit(self):
@@ -137,7 +138,7 @@ class Crawler:
                 self.csrfToken = self.getCSRF(header)
                 print("\nHandling 200 Request\n")
                 self.needCookies = True
-                return self.handle200(html, parser)
+                return self.handle200(html)
             elif responseCode == '302':
                 print("\nHandling 302 Request")
                 return self.handle302(brokenData)
@@ -154,40 +155,42 @@ class Crawler:
     Handle Data from the html here and then dispatch
     
     '''
-    def handle200(self, html, parser):
+    def handle200(self, html):
         parser = customHTML()
-        #print("\nWe are now handling a 200, the html is \n" + str(html))
         parser.feed(html)
         if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
             #Should work on the path list from the parser
             print("|IN the path loopingn|")
             #print("Self.csrf is " + self.csrfToken)
             #print("Self.session is " + self.sessionId)
-            pathList = parser.paths
-            for path in pathList:
+            for path in ALL_PATHS:
                 if path[0] == '/accounts/logout/':
                     path[1] = True
-            for path in pathList:
+            for path in ALL_PATHS:
                 if path[1] == True:
-                    pass
-                    #Skip because we have already checked 
+                    pass #Skip because we have already checked 
                 else: #We haven't checked it
                     path[1] = True
-                    self.csrfToken = self.permCsrf
-                    self.sessionId = self.permSesh
-                    sock = self.sockInit()
-                    sock.connect((self.server, self.port))
-                    request = self.createGet(path[0], True)
-                    print("This request is " + str(request))
-                    sock.send(request.encode('ascii'))
-                    data = self.receive_message(sock)
+                    print(f'[Handle200] Next path is {path[0]}')
+                    return self.createGet(path[0], self.needCookies)
                     
-                    print(data)
-            print("AT THE END")
+                    # self.csrfToken = self.permCsrf
+                    # self.sessionId = self.permSesh
+                    # sock = self.sockInit()
+                    # sock.connect((self.server, self.port))
+                    # request = self.createGet(path[0], True)
+                    # print("This request is " + str(request))
+                    # sock.send(request.encode('ascii'))
+                    # data = self.receive_message(sock)
+                    
+            print("Finished all potential paths")
             return 
         else: #We need to send a post request so that we can login
             self.next = parser.next
             self.middleware = parser.crsfMiddleware
+            for path in ALL_PATHS:
+                if path[0] == '/accounts/login':
+                    path[1] = True
             return self.createPost("/accounts/login/")
 
         #return #Figure out to make this return something depending on the necessary request
@@ -291,7 +294,7 @@ class Crawler:
 class customHTML(HTMLParser):
     def __init__(self):
         super().__init__()
-        self.paths = [] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+        self.paths = [] 
         self.flags = [] # If we find flags in html store them here
         self.flag_found = False # If current page finds a flag this becomes true
         self.crsfMiddleware = '' #The middleware token -> bad naming
@@ -329,9 +332,10 @@ class customHTML(HTMLParser):
     def handleLinks(self, attrs):
         href = attrs.get('href')
         if href and self.validURL(href):
-            paths = {path for path, seen in self.paths}
+            paths = {path for path, seen in ALL_PATHS}
             if href not in paths:
-                self.paths.append([href, False])
+                ALL_PATHS.append([href, False])
+                print(f'All paths {ALL_PATHS}')
     
     '''
     Handle secrets -> Add any flags that we find to the list of found flags and pretty much do nothing else
