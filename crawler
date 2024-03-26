@@ -8,6 +8,8 @@ from html.parser import HTMLParser
 import time
 import sys
 import urllib.parse
+import gzip
+import io
 
 
 DEFAULT_SERVER = "proj5.3700.network"
@@ -25,6 +27,7 @@ class Crawler:
         self.csrftoken = ''
         self.needCookies = False
         self.count_of_requests = 0 
+        self.PAGES_SEARCHED = 0
 
 
 
@@ -35,39 +38,24 @@ class Crawler:
         mysocket.connect((self.server, self.port))
         while(1):
             path = ""
-
-            '''
-                #Send the first request to the server
-                if count == 0:
-                    path = self.getNextPath(data)#new path 
-                    request = self.createHTML(path[0])
-                    self.paths_checked.append(path[0])
-                    count = count + 1
-                
-                #A message has already been recieved so use feedback information to craft next request
-                else:
-                    path = self.getNextPath(data) # Retrive the new path to send request to. 
-                    if path[0] == "200": # Ignore for now
-                        request = path[1]
-                    else:
-                        request = self.createHTML(path[0]) # Converts the path to the correct request format
-                        self.paths_checked.append(path[0]) # Mark the path as seen
-                        count = count + 1
-                #data = self.receive_message(mysocket)
-                #print("Response:\n%s" % data.decode('ascii'))
-            '''
-
             request = self.getNextRequest(data) # Gets the next path to check            
-            # if path == '/accounts/login/?next=/fakebook/' or path == '/accounts/login': ####### HANDLE LOGIN HERE #############
-            #     print('Creating Login Request')
-            #     request = self.createLogInRequest(data, path)
-            #     ALL_PATHS['/accounts/login'] = True
 
-            #print("REQUEST SENT: \n", request)
             self.count_of_requests +=1
-            mysocket.send(request.encode('ascii'))
+            while True:
+                try:
+                    if request is not None:
+                        mysocket.send(request.encode('ascii'))
+                        break
+                    else:
+                        print("Error: Request is None.")
+                except AttributeError as e:
+                    print(f"Error: {e}")
+
             data = self.receive_message(mysocket)
             #print("RRESPONSE RECIEVED: ", data)
+            self.PAGES_SEARCHED = self.PAGES_SEARCHED + 1
+            if self.PAGES_SEARCHED % 100 == 0:
+                print(f'Searched {self.PAGES_SEARCHED} pages')
 
 
 
@@ -89,7 +77,13 @@ class Crawler:
             return self.createGet(root, self.needCookies)
 
         brokenData = data.split("\n")
-        response_code = brokenData[0].split(' ')[1]
+        while True:
+            try:
+                response_code = brokenData[0].split(' ')[1]
+                break
+            except IndexError:
+                continue
+
         header_end_index = data.find('\r\n\r\n')
         header = data[:header_end_index]
         html = data[header_end_index + 4:].strip()
@@ -164,13 +158,13 @@ class Crawler:
         Only include cookies if specified.
     '''
     def createGet(self, path, cookies):
-        print(f'Marking {path} as seen.')
+        #print(f'Marking {path} as seen.')
         #ALL_PATHS[path] = ALL_PATHS.get(path, True)
         ALL_PATHS[path] = True
         if not cookies:
             request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
         else:
-            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
+            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
 
         return request
     '''
@@ -222,9 +216,29 @@ class Crawler:
                     if not data:
                         break  # Connection closed
                     response_body += data
+        # Check if the response is gzip compressed
+        if 'content-encoding: gzip' in headers.lower():
+            response_body = gzip.decompress(response_body)
 
         #print("Body:\n", response_body.decode('utf-8'))
         return headers + "\n" + response_body.decode('utf-8')
+    
+    def read_chunked_body(self, sock):
+        body = b""
+        while True:
+            chunk_size_str = b""
+            char = b""
+            while char != b"\r\n":
+                char = sock.recv(2)
+                if char == b"\r\n": break
+                chunk_size_str += char
+            chunk_size = int(chunk_size_str.split(b";")[0], 16)
+            if chunk_size == 0:
+                break  # End of chunks
+            chunk = sock.recv(chunk_size)
+            sock.recv(2)  # Consume trailing \r\n of the chunk
+            body += chunk
+        return body
 
     def get_content_length(self, headers):
         for line in headers.split('\r\n'):
@@ -281,21 +295,19 @@ class customHTML(HTMLParser):
         class_name = dict_attrs.get("class")
         if class_name == 'secret_flag':
             self.flag_found = True
-            print("I FOUND A FLAG")
-    
-            
+                
     '''
         If we are in a form. Find what inputs we need and extract the CSRFMiddlewareToken
     '''
     def handleForm(self, tag, attrs):
         dict_attrs = dict(attrs)
-        print(f'[in handleForm] Attributes: {dict_attrs}')
+        #print(f'[in handleForm] Attributes: {dict_attrs}')
         input_type = dict_attrs.get("type")
         input_name = dict_attrs.get("name")
         # Extract CSRF token if present
         if input_type == "hidden" and input_name == "csrfmiddlewaretoken":
             self.csrfmiddlewaretoken = dict_attrs['value']
-            print(f'Found Middleware: {self.csrfmiddlewaretoken}')
+            #print(f'Found Middleware: {self.csrfmiddlewaretoken}')
         elif input_type == "hidden" and input_name == "next":
             self.next_specified = dict_attrs.get("value")
 
@@ -316,8 +328,9 @@ class customHTML(HTMLParser):
     def handle_data(self, data):
         if self.flag_found:
             flag_content = data.strip().split(': ')[1]
-            print("Extracted flag:", flag_content)
             self.flags.append(flag_content)
+            print(f'Flag {len(self.flags)} Found')
+            print("Extracted flag:", flag_content)
             self.flag_found = False
         if len(self.flags) == 5:
             for x in self.flags:
