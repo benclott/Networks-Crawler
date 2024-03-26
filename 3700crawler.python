@@ -62,7 +62,7 @@ class Crawler:
             response_headers += data
         
         headers = response_headers.decode('utf-8')
-        print("Headers:\n", headers)
+        #print("Headers:\n", headers)
         
         # Check if the response is chunked
         if 'transfer-encoding: chunked' in headers.lower():
@@ -78,7 +78,7 @@ class Crawler:
                         break  # Connection closed
                     response_body += data
 
-        print("Body:\n", response_body.decode('utf-8'))
+        #print("Body:\n", response_body.decode('utf-8'))
         return headers + "\n" + response_body.decode('utf-8')
 
     def get_content_length(self, headers):
@@ -117,7 +117,7 @@ class Crawler:
             return self.createGet(root, self.needCookies)
         else:
 
-            
+            print(data)
             #Compile the data that we have into usable information 
             brokenData = data.split("\n")
             responseCode = brokenData[0].split(' ')[1]
@@ -127,14 +127,22 @@ class Crawler:
             if count == 0:
                 self.sessionId = self.getSessionId(header)
                 self.csrfToken = self.getCSRF(header)
+                print('Here 1')
+                print(f'CSRF Token: {self.csrfToken}')
+                print(f'Session ID: {self.sessionId}')
                 count = count + 1 
             else:
                 pass
             if responseCode == '200':
                 self.sessionId = self.getSessionId(header)
                 self.csrfToken = self.getCSRF(header)
+                print('Here 2')
+                print(f'CSRF Token: {self.csrfToken}')
+                print(f'Session ID: {self.sessionId}')
+
                 print("\nHandling 200 Request\n")
                 self.needCookies = True
+                
                 return self.handle200(html, parser)
             elif responseCode == '302':
                 print("\nHandling 302 Request")
@@ -171,8 +179,6 @@ class Crawler:
                     #Skip because we have already checked 
                 else: #We haven't checked it
                     path[1] = True
-                    print(self.csrfToken)
-                    print(self.sessionId)
                     sock = self.sockInit()
                     sock.connect((self.server, self.port))
                     request = self.createGet(path[0], True)
@@ -328,6 +334,7 @@ class customHTML(HTMLParser):
             paths = {path for path, seen in self.paths}
             if href not in paths:
                 self.paths.append([href, False])
+                print(f'Found Paths: {paths}')
     
     '''
     Handle secrets -> Add any flags that we find to the list of found flags and pretty much do nothing else
