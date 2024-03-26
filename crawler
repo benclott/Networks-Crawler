@@ -10,6 +10,8 @@ import urllib.parse
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
+ALL_PATHS = {'/fakebook/': False, '/accounts/logout/': True} # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+
 
 class Crawler:
     def __init__(self, args):
@@ -19,9 +21,10 @@ class Crawler:
         self.password = args.password
         self.sessionid = ''
         self.csrftoken = ''
+        self.needCookies = False
         self.count_of_requests = 0 
 
-    paths_checked = []
+
 
     def run(self):
         
@@ -52,31 +55,19 @@ class Crawler:
                 #print("Response:\n%s" % data.decode('ascii'))
             '''
 
-            path = self.getNextPath(data) # Gets the next path to check            
-            if path == '/accounts/login/?next=/fakebook/' or path == '/accounts/login': ####### HANDLE LOGIN HERE #############
-                print('Sending Login Request')
-                request = self.createLogInRequest(data, path)
-            else:
-                request = self.createGet(path) # Converts the path to the correct request format
-                self.paths_checked.append(path) # Mark the path as seen so it does not get checked again
-                
+            request = self.getNextRequest(data) # Gets the next path to check            
+            # if path == '/accounts/login/?next=/fakebook/' or path == '/accounts/login': ####### HANDLE LOGIN HERE #############
+            #     print('Creating Login Request')
+            #     request = self.createLogInRequest(data, path)
+            #     ALL_PATHS['/accounts/login'] = True
 
             print("REQUEST SENT: \n", request)
             self.count_of_requests +=1
             mysocket.send(request.encode('ascii'))
-            data = mysocket.recv(1000000).decode('ascii')
-            print("RRESPONSE RECIEVED: ", data)
+            data = self.receive_message(mysocket)
+            #print("RRESPONSE RECIEVED: ", data)
 
-    '''
-        Create the login post request. This is similar to the Create Post method that you have
-        TODO: Handle difference between regular login and login with the next
-        - Headers for the login currently dont have a Connection: keep-alive field
-    '''   
-    def createLogInRequest(self, data, path):
-        body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={parser.csrfmiddlewaretoken}&next='
-        headers = f'Content-Type: application/x-www-form-urlencoded\nContent-Length: {len(body)}\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}'
-        request = f'POST {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n{headers}\r\n\r\n{body}'
-        return request
+
 
 
     '''
@@ -90,42 +81,56 @@ class Crawler:
         Case 4: 400 series response code
             - TODO: currently exits program
     '''
-    def getNextPath(self, data):
-        root = "/"
+    def getNextRequest(self, data):
+        root = "/fakebook/"
         if data == '': # first run through this will be empty as nothing has been recieved
-            return root
+            return self.createGet(root, self.needCookies)
 
-        response_code = data.split("\n")[0].split(' ')[1] # Extract response code from line 1
+        brokenData = data.split("\n")
+        response_code = brokenData[0].split(' ')[1]
+        header_end_index = data.find('\r\n\r\n')
+        header = data[:header_end_index]
+        html = data[header_end_index + 4:].strip()
+        self.getSessionId(header)
+        self.getCSRF(header)
+        print(f'Cookies: sesh - {self.sessionid} || csrf - {self.csrftoken}')
 
         print(f'Currently Handling: {response_code}')
         if response_code == '302': # Server returned redirected PATH
             redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the new path from the response
-            return redirectedPath # Return path that the server redirects us to
+            return self.createGet(redirectedPath, self.needCookies) # Return path that the server redirects us to
         elif response_code == '200':
-            # Split the response into header and body parts
-            header_end_index = data.find('\r\n\r\n')
-            header = data[:header_end_index]
-            html = data[header_end_index + 4:].strip()
-            self.sessionid = self.getSessionId(header)
-            self.csrftoken = self.getCSRF(header)
-
-            #print(f'Header:  {header} \n HTML: {html}')
-
-            parser = customHTML()
-            parser.feed(html) # Send the HTML to the parser to extract links and that stuff
-            return parser.getUnseen() # Return a single unseen path to visit next 
+            
+            self.needCookies = True
+            return self.handle200(html, header) # Parses the HTML and returns the next request (could be login)
         elif response_code.startswith('4'):
             print("You SUCK!!\n\n")
             sys.exit(0)
-
-
+    '''
+        Parses the HTML that gets returned in the Body of 200 OK
+        Returns an unseen path from the parser that we can crawl next
+        If the form_method from the parser is set to post, then return
+        a login post request
+    '''
+    def handle200(self, html, header):
+        parserobj = customHTML()
+        parserobj.feed(html) # Send the HTML to the parser to extract links and that stuff
+        
+        if parserobj.form_method == 'post': # Form requires post request, return the post for logging in
+            print(f'ParserObj: {parserobj.form_method}')
+            ALL_PATHS['/accounts/login'] = ALL_PATHS.get('/accounts/login', True)
+            return self.createLogInRequest('/accounts/login/', parserobj, header)
+        else: # Did not find a form, so get the next link
+            nextPath = parserobj.getUnseen()
+            print(f'[Handling 200] getUnseen() found {nextPath}')
+            return self.createGet(nextPath, self.needCookies)  # Return a single unseen path to visit next 
     '''
         These next two methods extract the sessionid and CSRF Token from a response header
     '''
     def getSessionId(self, header):
         start_index = header.find("sessionid=") # Look for the start index of "sessionid="
         if start_index == -1: #sessionid not present
-            return None
+            return -1
         start_index += len("sessionid=") # Starting index of actual id 
         
         # Assume the session ID ends at the next semicolon or the end of the string if no semicolon is found
@@ -133,13 +138,14 @@ class Crawler:
         if end_index == -1: # No semi colon is found
             # the session ID goes until the end of the string
             end_index = len(header)
-        return header[start_index:end_index] # Extract and return the session ID 
+        self.sessionid = header[start_index:end_index] # Extract and return the session ID 
     def getCSRF(self, header):
         # Look for the start index of "sessionid="
         start_index = header.find("csrftoken=")
+        #print(f'Looking for CSRF. Start index: {start_index}')
         if start_index == -1:
             # If "sessionid=" is not found, return None or an appropriate value
-            return None
+            return -1
         
         # Add the length of "sessionid=" to the start index to find where the session ID starts
         start_index += len("sessionid=")
@@ -149,26 +155,30 @@ class Crawler:
         if end_index == -1:
             # If no semicolon is found, the session ID goes until the end of the string
             end_index = len(header)
+        self.csrftoken = header[start_index:end_index] # Extract and return the session ID 
 
-
-    #Method to decide which server/host to send the website too
-    def sendto(self):
-        ##Check if args.s exissts
-        s = args.server
-        p = args.port
-        if s == "proj5.3700.network" and p == 443:
-            #The default has been provided so...
-            return ("www.3700.network", 443)
+    '''
+        Formats and returns the proper GET request for the given path. 
+        Only include cookies if specified.
+    '''
+    def createGet(self, path, cookies):
+        print(f'Marking {path} as seen.')
+        ALL_PATHS[path] = ALL_PATHS.get(path, True)
+        if not cookies:
+            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
         else:
-            return (s, p)
+            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
 
-    # Formats and returns the proper GET request for the given path
-    def createGet(self, path):
-        if self.count_of_requests == 0:
-            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n'
-        else:
-            request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n'
-
+        return request
+    '''
+        Create the login post request. This is similar to the Create Post method that you have
+        TODO: Handle difference between regular login and login with the next
+        - Headers for the login currently dont have a Connection: keep-alive field
+    '''   
+    def createLogInRequest(self, path, parserobj, header):
+        body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={parserobj.csrfmiddlewaretoken}&next={parserobj.next_specified}'
+        headers = f'Content-Type: application/x-www-form-urlencoded\nContent-Length: {len(body)}\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}'
+        request = f'POST {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n{headers}\r\n\r\n{body}'
         return request
     
     '''
@@ -185,26 +195,43 @@ class Crawler:
         Received the message and deals with exterior crap
     """
     def receive_message(self, sock):
-        response = "" # Empty buffer
-        while(True):
-            try:
-                data = sock.recv(4096)
-            except sock.TimeoutError:
-                break     
-            if(data == b'\n'): # We are at the end of the json
-                break
-            
-            if(data == b''): # We are at the end of anything to be read
-                break
-            response += data.decode('ascii')
-        return response
+            # Read HTTP headers first
+        response_headers = b""
+        while not response_headers.endswith(b"\r\n\r\n"):
+            data = sock.recv(1)  # Read one byte at a time to get headers
+            if not data:
+                break  # Connection closed
+            response_headers += data
+        
+        headers = response_headers.decode('utf-8')
+        print("Headers:\n", headers)
+        
+        # Check if the response is chunked
+        if 'transfer-encoding: chunked' in headers.lower():
+            response_body = self.read_chunked_body(sock)
+        else:
+            # If not chunked, use Content-Length to read the response body
+            content_length = self.get_content_length(headers)
+            response_body = b""
+            if content_length:
+                while len(response_body) < content_length:
+                    data = sock.recv(content_length - len(response_body))
+                    if not data:
+                        break  # Connection closed
+                    response_body += data
 
+        print("Body:\n", response_body.decode('utf-8'))
+        return headers + "\n" + response_body.decode('utf-8')
 
+    def get_content_length(self, headers):
+        for line in headers.split('\r\n'):
+            if line.lower().startswith('content-length:'):
+                return int(line.split(":")[1].strip())
+        return None
 
 
 '''Create a custom HTML class that will identify and handle each problem'''
 class customHTML(HTMLParser):
-    paths = [['/', True]] # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
     flags = [] # If we find flags in html store them here
     flag_found = False # If current page finds a flag this becomes true
     inForm = False # True if the parser is currently inside a Form
@@ -217,10 +244,10 @@ class customHTML(HTMLParser):
         then sets the seen status to True because it has been visited
     '''
     def getUnseen(self):
-        for path in self.paths:
-            if path[1] == False:
-                path[1] = True # Set status to true so that we dont crawl again
-                return path[0]
+        for path, seen in ALL_PATHS.items():
+            if seen == False:
+                seen = True # Set status to true so that we dont crawl again
+                return path
 
     '''
        Case 1: Tag is 'a'
@@ -233,8 +260,9 @@ class customHTML(HTMLParser):
     '''
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        print(f'Found start tag {tag}')
+        # print(f'Found start tag {tag}')
         if tag == 'a':  # Check if the tag is an anchor tag
+            print(f'Found start tag {tag}')
             self.handleLinks(attrs) # Adds found link to saved paths
         elif tag == 'h3': # This is where flags are
             for attr in attrs:
@@ -257,20 +285,20 @@ class customHTML(HTMLParser):
         input_name = dict_attrs.get("name")
         # Extract CSRF token if present
         if input_type == "hidden" and input_name == "csrfmiddlewaretoken":
-            self.crsfMiddleware = dict_attrs.get("value")
+            self.csrfmiddlewaretoken = dict_attrs['value']
             print(f'Found Middleware: {self.csrfmiddlewaretoken}')
         elif input_type == "hidden" and input_name == "next":
             self.next_specified = dict_attrs.get("value")
+
     '''
         Extracts the links from the HTML and add them to a list if they are not already present
     '''
     def handleLinks(self, attrs):
         found_path = attrs.get('href')
         if found_path and self.validURL(found_path): # make sure the found path is valid
-            paths = {path for path, seen in self.paths} # extract only the path from saved list
-            if found_path not in paths: # if the found path is not already in our saved paths
-                self.paths.append([found_path, False]) # add it
-                print(f'Found New Path {found_path}. Adding to Saved.')
+            if found_path not in ALL_PATHS: # if the found path is not already in our saved paths
+                ALL_PATHS[found_path] = False # add it
+                print(f'Found New Path. All: {ALL_PATHS}')
 
     '''
         To be called inside the state tag
@@ -280,8 +308,8 @@ class customHTML(HTMLParser):
         #print("Encountered some data  :", data)
         if self.flag_found == True:
             self.flag_content += data.strip()
-            flags.append(self.flag_content)
-            print(f'I ADDED THE FLAG {flag_content}')
+            #flags.append(self.flag_content)
+            #print(f'I ADDED THE FLAG {flag_content}')
             flag_found = False # set back to false so you can find the next one
             
     
@@ -291,13 +319,16 @@ class customHTML(HTMLParser):
         Returns false otherwise
     '''
     def validURL(self, url):
-        parsed = urllib.parse.urlparse(url).netloc.strip() # extract netloc from the URL we found
-        base = urllib.parse.urlparse("https://www.3700.network").netloc # this is our target domains netloc
-        if parsed != "":
-            #print(f'Comparison: {base} and {parsed}, {base == parsed}')
-            return base == parsed
-        else:
-            return True
+        # Assume base_url is the root URL of your target website
+        base_url = "https://www.3700.network"
+        base_netloc = urllib.parse.urlparse(base_url).netloc
+
+        # Fully resolve relative URLs against the base_url
+        full_url = urllib.parse.urljoin(base_url, url)
+        parsed = urllib.parse.urlparse(full_url)
+
+        # Now, parsed contains the full URL. You can check its netloc against your base netloc
+        return parsed.netloc == base_netloc and parsed.scheme in ["http", "https"]
             
 
     '''
