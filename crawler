@@ -10,7 +10,7 @@ import urllib.parse
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
-ALL_PATHS = {'/fakebook/': False, '/accounts/logout/': True} # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
+ALL_PATHS = {'/fakebook/': True, '/accounts/logout/': True, '/': True, '/accounts/login/': True} # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
 
 
 class Crawler:
@@ -61,7 +61,7 @@ class Crawler:
             #     request = self.createLogInRequest(data, path)
             #     ALL_PATHS['/accounts/login'] = True
 
-            print("REQUEST SENT: \n", request)
+            #print("REQUEST SENT: \n", request)
             self.count_of_requests +=1
             mysocket.send(request.encode('ascii'))
             data = self.receive_message(mysocket)
@@ -93,9 +93,9 @@ class Crawler:
         html = data[header_end_index + 4:].strip()
         self.getSessionId(header)
         self.getCSRF(header)
-        print(f'Cookies: sesh - {self.sessionid} || csrf - {self.csrftoken}')
+        #print(f'Cookies: sesh - {self.sessionid} || csrf - {self.csrftoken}')
 
-        print(f'Currently Handling: {response_code}')
+        #print(f'Currently Handling: {response_code}')
         if response_code == '302': # Server returned redirected PATH
             redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the new path from the response
             return self.createGet(redirectedPath, self.needCookies) # Return path that the server redirects us to
@@ -117,12 +117,12 @@ class Crawler:
         parserobj.feed(html) # Send the HTML to the parser to extract links and that stuff
         
         if parserobj.form_method == 'post': # Form requires post request, return the post for logging in
-            print(f'ParserObj: {parserobj.form_method}')
+            #print(f'ParserObj: {parserobj.form_method}')
             ALL_PATHS['/accounts/login'] = ALL_PATHS.get('/accounts/login', True)
             return self.createLogInRequest('/accounts/login/', parserobj, header)
         else: # Did not find a form, so get the next link
             nextPath = parserobj.getUnseen()
-            print(f'[Handling 200] getUnseen() found {nextPath}')
+            #print(f'[Handling 200] getUnseen() found {nextPath}')
             return self.createGet(nextPath, self.needCookies)  # Return a single unseen path to visit next 
     '''
         These next two methods extract the sessionid and CSRF Token from a response header
@@ -163,7 +163,8 @@ class Crawler:
     '''
     def createGet(self, path, cookies):
         print(f'Marking {path} as seen.')
-        ALL_PATHS[path] = ALL_PATHS.get(path, True)
+        #ALL_PATHS[path] = ALL_PATHS.get(path, True)
+        ALL_PATHS[path] = True
         if not cookies:
             request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
         else:
@@ -204,7 +205,7 @@ class Crawler:
             response_headers += data
         
         headers = response_headers.decode('utf-8')
-        print("Headers:\n", headers)
+        #print("Headers:\n", headers)
         
         # Check if the response is chunked
         if 'transfer-encoding: chunked' in headers.lower():
@@ -220,7 +221,7 @@ class Crawler:
                         break  # Connection closed
                     response_body += data
 
-        print("Body:\n", response_body.decode('utf-8'))
+        #print("Body:\n", response_body.decode('utf-8'))
         return headers + "\n" + response_body.decode('utf-8')
 
     def get_content_length(self, headers):
@@ -262,18 +263,24 @@ class customHTML(HTMLParser):
         attrs = dict(attrs)
         # print(f'Found start tag {tag}')
         if tag == 'a':  # Check if the tag is an anchor tag
-            print(f'Found start tag {tag}')
+            #print(f'Found start tag {tag}')
             self.handleLinks(attrs) # Adds found link to saved paths
         elif tag == 'h3': # This is where flags are
-            for attr in attrs:
-                if attr[0] == 'class' and 'secret_flag' in attr[1]:
-                    self.flag_found = True
-                    print("I FOUND A FLAG")
+            self.handleSecrets(attrs)
         elif tag == 'form':
             self.inForm = True
             self.form_method = attrs.get('method', 'get').lower() # Default form method is GET, otherwise POST
         elif tag == 'input' and self.inForm: # We have found input tags in a form to collect data from
             self.handleForm(tag, attrs)
+
+    def handleSecrets(self, attrs):
+        dict_attrs = dict(attrs)
+        #print(f'[in handleSecrets] Attributes: {dict_attrs}')
+        class_name = dict_attrs.get("class")
+        if class_name == 'secret_flag':
+            self.flag_found = True
+            print("I FOUND A FLAG")
+    
             
     '''
         If we are in a form. Find what inputs we need and extract the CSRFMiddlewareToken
@@ -298,21 +305,19 @@ class customHTML(HTMLParser):
         if found_path and self.validURL(found_path): # make sure the found path is valid
             if found_path not in ALL_PATHS: # if the found path is not already in our saved paths
                 ALL_PATHS[found_path] = False # add it
-                print(f'Found New Path. All: {ALL_PATHS}')
+                #print(f'Found New Path. All: {ALL_PATHS}')
 
     '''
         To be called inside the state tag
         Based on which function mpping it should do something 
     '''
     def handle_data(self, data):
-        #print("Encountered some data  :", data)
-        if self.flag_found == True:
-            self.flag_content += data.strip()
-            #flags.append(self.flag_content)
-            #print(f'I ADDED THE FLAG {flag_content}')
-            flag_found = False # set back to false so you can find the next one
-            
-    
+        if self.flag_found:
+            flag_content = data.strip().split(': ')[1]
+            print("Extracted flag:", flag_content)
+            self.flag = False
+
+
     '''
         TODO: Not sure if this works properly
         Returns true if the URL is valid and the path should be crawled.
@@ -338,24 +343,6 @@ class customHTML(HTMLParser):
         #print("Encountered an end tag :", tag)
         pass
 
-    
-    '''
-        Method to build a post request with the provided data from class
-        1. Take in all day
-        2. Create a string of all necessary tags 
-
-        The idea is that this will send a post, then we will skip the sending of a get
-        After that we will read and start over
-
-        Should return a path to a post message
-    '''
-    def sendPost(self):
-        pass
-
-    
-
-
-    ##Send 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
     parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
