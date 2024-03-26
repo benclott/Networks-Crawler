@@ -111,21 +111,28 @@ class Crawler:
     will create the path to send the next request and then also the message
     '''
     def getPath(self, data):
+        count = 0
         root = "/fakebook/"
         if data == '':
             return self.createGet(root, self.needCookies)
         else:
 
+            
             #Compile the data that we have into usable information 
             brokenData = data.split("\n")
             responseCode = brokenData[0].split(' ')[1]
             header_end_index = data.find('\r\n\r\n')
             header = data[:header_end_index]
-            self.sessionId = self.getSessionId(header)
-            self.csrfToken = self.getCSRF(header)
             html = data[header_end_index + 4:].strip()
-
+            if count == 0:
+                self.sessionId = self.getSessionId(header)
+                self.csrfToken = self.getCSRF(header)
+                count = count + 1 
+            else:
+                pass
             if responseCode == '200':
+                self.sessionId = self.getSessionId(header)
+                self.csrfToken = self.getCSRF(header)
                 print("\nHandling 200 Request\n")
                 self.needCookies = True
                 return self.handle200(html, parser)
@@ -149,27 +156,24 @@ class Crawler:
         parser = customHTML()
         #print("\nWe are now handling a 200, the html is \n" + str(html))
         parser.feed(html)
-        self.next = parser.next
-        self.middleware = parser.crsfMiddleware
+        
         if(parser.method == "GET"): #This means that we did not find a form that updated so we should deal with the links that are available
             #Should work on the path list from the parser
-            
-            
-            print("|IN THIS|")
+            print("|IN the path loopingn|")
+            print("Self.next is " + self.next)
+            print("Self.middleware is " + self.middleware)
             pathList = parser.paths
-            print("PATHS ARE ")
             for path in pathList:
                 if path[0] == '/accounts/logout/':
                     path[1] = True
             for path in pathList:
-                print(parser.paths)
                 if path[1] == True:
                     pass
                     #Skip because we have already checked 
                 else: #We haven't checked it
-                    self.next = parser.next
-                    self.middleware = parser.crsfMiddleware
                     path[1] = True
+                    print(self.csrfToken)
+                    print(self.sessionId)
                     sock = self.sockInit()
                     sock.connect((self.server, self.port))
                     request = self.createGet(path[0], True)
@@ -181,6 +185,8 @@ class Crawler:
             print("AT THE END")
             return 
         else: #We need to send a post request so that we can login
+            self.next = parser.next
+            self.middleware = parser.crsfMiddleware
             return self.createPost("/accounts/login/")
 
         #return #Figure out to make this return something depending on the necessary request
