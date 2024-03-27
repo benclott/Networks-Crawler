@@ -10,11 +10,9 @@ import urllib.parse
 import gzip
 import io
 
-
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
 ALL_PATHS = {'/fakebook/': True, '/accounts/logout/': True, '/': True, '/accounts/login/': True} # (Path, Boolean), (Path, Boolean), ... || True --> Path has been seen, False --> Path has not been seen
-
 
 class Crawler:
     def __init__(self, args):
@@ -22,23 +20,21 @@ class Crawler:
         self.port = args.port
         self.username = args.username
         self.password = args.password
-        self.sessionid = ''
-        self.csrftoken = ''
-        self.needCookies = False
-        self.count_of_requests = 0 
-        self.PAGES_SEARCHED = 0
-
-
+        self.sessionid = '' # Current saved sessionid cookie
+        self.csrftoken = '' # Current saved csrf cookie
+        self.needCookies = False # Do we need cookies in our next request?
+        self.count_of_requests = 0 # Number of requests sent so far (for debugging)
+        self.PAGES_SEARCHED = 0 # Trying to determine how many pages it takes to find flags
 
     def run(self):
         
         data = ''  # Store the data of the most recent recieved message
         mysocket = self.sockInit() 
         mysocket.connect((self.server, self.port))
-        while(1):
+
+        while(1): # Infinitely send requests  
             path = ""
             request = self.getNextRequest(data) # Gets the next path to check            
-
             self.count_of_requests +=1
             while True:
                 try:
@@ -52,13 +48,6 @@ class Crawler:
                     sys.exit(1)
 
             data = self.receive_message(mysocket)
-            #print("RRESPONSE RECIEVED: ", data)
-            # self.PAGES_SEARCHED = self.PAGES_SEARCHED + 1
-            # if self.PAGES_SEARCHED % 100 == 0:
-            #     print(f'Searched {self.PAGES_SEARCHED} pages')
-
-
-
 
     '''
         Case 1; Data is empty
@@ -77,7 +66,7 @@ class Crawler:
             return self.createGet(root, self.needCookies)
 
         brokenData = data.split("\n")
-        while True:
+        while True: # Catch any errors when extracting response code
             try:
                 response_code = brokenData[0].split(' ')[1]
                 break
@@ -89,14 +78,11 @@ class Crawler:
         html = data[header_end_index + 4:].strip()
         self.getSessionId(header)
         self.getCSRF(header)
-        #print(f'Cookies: sesh - {self.sessionid} || csrf - {self.csrftoken}')
 
-        #print(f'Currently Handling: {response_code}')
         if response_code == '302': # Server returned redirected PATH
             redirectedPath = brokenData[4].split(" ")[1].strip() # Extract the new path from the response
             return self.createGet(redirectedPath, self.needCookies) # Return path that the server redirects us to
         elif response_code == '200':
-            
             self.needCookies = True
             return self.handle200(html, header) # Parses the HTML and returns the next request (could be login)
         elif response_code.startswith('4'):
@@ -106,7 +92,7 @@ class Crawler:
         Parses the HTML that gets returned in the Body of 200 OK
         Returns an unseen path from the parser that we can crawl next
         If the form_method from the parser is set to post, then return
-        a login post request
+        a login post request.
     '''
     def handle200(self, html, header):
         parserobj = customHTML()
@@ -126,58 +112,43 @@ class Crawler:
     def getSessionId(self, header):
         start_index = header.find("sessionid=") # Look for the start index of "sessionid="
         if start_index == -1: #sessionid not present
-            return -1
+            return -1 # Exit with error
         start_index += len("sessionid=") # Starting index of actual id 
-        
-        # Assume the session ID ends at the next semicolon or the end of the string if no semicolon is found
-        end_index = header.find(";", start_index)
-        if end_index == -1: # No semi colon is found
-            # the session ID goes until the end of the string
-            end_index = len(header)
-        self.sessionid = header[start_index:end_index] # Extract and return the session ID 
+        end_index = header.find(";", start_index) # Will be -1 if no semi colon is found
+        if end_index == -1: # No semi colon is found           
+            end_index = len(header) # the session ID goes until the end of the string
+        self.sessionid = header[start_index:end_index] # Update saved sessionid
     def getCSRF(self, header):
-        # Look for the start index of "sessionid="
-        start_index = header.find("csrftoken=")
-        #print(f'Looking for CSRF. Start index: {start_index}')
+        start_index = header.find("csrftoken=") # Look for the start index of "csrftoken=="
         if start_index == -1:
-            # If "sessionid=" is not found, return None or an appropriate value
-            return -1
-        
-        # Add the length of "sessionid=" to the start index to find where the session ID starts
+            return -1 # If no token is found, exit and do nothing
         start_index += len("sessionid=")
-        
-        # Assume the session ID ends at the next semicolon or the end of the string if no semicolon is found
-        end_index = header.find(";", start_index)
+        end_index = header.find(";", start_index) # Will be -1 if no semi colon is found
         if end_index == -1:
-            # If no semicolon is found, the session ID goes until the end of the string
-            end_index = len(header)
-        self.csrftoken = header[start_index:end_index] # Extract and return the session ID 
-
+            end_index = len(header) # the session ID goes until the end of the string
+        self.csrftoken = header[start_index:end_index] # update saved csrf token 
     '''
         Formats and returns the proper GET request for the given path. 
         Only include cookies if specified.
+        Mark the path as seen.
     '''
     def createGet(self, path, cookies):
-        #print(f'Marking {path} as seen.')
-        #ALL_PATHS[path] = ALL_PATHS.get(path, True)
         ALL_PATHS[path] = True
         if not cookies:
             request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nConnection: closed\r\n\r\n'
         else:
             request = f'GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nAccept-Encoding: gzip\r\nConnection: closed\r\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}\r\n\r\n'
-
         return request
     '''
-        Create the login post request. This is similar to the Create Post method that you have
-        TODO: Handle difference between regular login and login with the next
-        - Headers for the login currently dont have a Connection: keep-alive field
+        Create the login post request. 
+        Includes cookies as well as the username, password, middleware, and next fields that are 
+        in the body of the request
     '''   
     def createLogInRequest(self, path, parserobj, header):
         body = f'username={self.username}&password={self.password}&csrfmiddlewaretoken={parserobj.csrfmiddlewaretoken}&next={parserobj.next_specified}'
         headers = f'Content-Type: application/x-www-form-urlencoded\nContent-Length: {len(body)}\nCookie: csrftoken={self.csrftoken}; sessionid={self.sessionid}'
         request = f'POST {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n{headers}\r\n\r\n{body}'
         return request
-    
     '''
         Create and preps the socket with ssl.
         Returns the socket object.
@@ -187,24 +158,25 @@ class Crawler:
         ssl_context = ssl.create_default_context()
         mysocket = ssl_context.wrap_socket(mysocket, server_hostname=self.server)
         return mysocket
-
-    """
-        Received the message and deals with exterior crap
-    """
+    '''
+        Received the message.
+        1. Extract the headers 
+        2. Determine if the body is chunk encoded by reading the header
+            - Use helper to handled chunked content
+        3. If regular content, read normally, only read neccecary amount
+        4. If response is gzip encoded use the decompress() method
+    '''
     def receive_message(self, sock):
-            # Read HTTP headers first
+        # Read HTTP headers first
         response_headers = b""
         while not response_headers.endswith(b"\r\n\r\n"):
             data = sock.recv(1)  # Read one byte at a time to get headers
             if not data:
-                break  # Connection closed
-            response_headers += data
-        
-        headers = response_headers.decode('utf-8')
-        #print("Headers:\n", headers)
-        
-        # Check if the response is chunked
-        if 'transfer-encoding: chunked' in headers.lower():
+                break  # Done reading
+            response_headers += data # append byte 
+        headers = response_headers.decode('utf-8') 
+    
+        if 'transfer-encoding: chunked' in headers.lower(): # Check if the response is chunked
             response_body = self.read_chunked_body(sock)
         else:
             # If not chunked, use Content-Length to read the response body
@@ -212,47 +184,51 @@ class Crawler:
             response_body = b""
             if content_length:
                 while len(response_body) < content_length:
-                    data = sock.recv(content_length - len(response_body))
+                    data = sock.recv(content_length - len(response_body)) # Read exactly amount of data expected
                     if not data:
-                        break  # Connection closed
+                        break  # Done reading
                     response_body += data
-        # Check if the response is gzip compressed
-        if 'content-encoding: gzip' in headers.lower():
+
+        if 'content-encoding: gzip' in headers.lower(): # Check if the response is gzip compressed
             response_body = gzip.decompress(response_body)
 
-        #print("Body:\n", response_body.decode('utf-8'))
         return headers + "\n" + response_body.decode('utf-8')
-    
+    '''
+        Helper method for reading chunked data.
+    '''
     def read_chunked_body(self, sock):
         body = b""
         while True:
             chunk_size_str = b""
             char = b""
-            while char != b"\r\n":
+            while char != b"\r\n": 
                 char = sock.recv(2)
-                if char == b"\r\n": break
+                if char == b"\r\n": 
+                    break
                 chunk_size_str += char
-            chunk_size = int(chunk_size_str.split(b";")[0], 16)
+            chunk_size = int(chunk_size_str.split(b";")[0], 16) # Number of chunks
             if chunk_size == 0:
                 break  # End of chunks
-            chunk = sock.recv(chunk_size)
+            chunk = sock.recv(chunk_size) # recieve only the size of the chunk
             sock.recv(2)  # Consume trailing \r\n of the chunk
-            body += chunk
+            body += chunk # append chunk we recieved to the total message
         return body
-
+    '''
+        Helper method to extract the content length from the response headers
+    '''
     def get_content_length(self, headers):
         for line in headers.split('\r\n'):
             if line.lower().startswith('content-length:'):
                 return int(line.split(":")[1].strip())
         return None
-
-
-'''Create a custom HTML class that will identify and handle each problem'''
+'''
+    Create a custom HTML class that will identify and handle each page
+'''
 class customHTML(HTMLParser):
     flags = [] # If we find flags in html store them here
     flag_found = False # If current page finds a flag this becomes true
     inForm = False # True if the parser is currently inside a Form
-    form_method = ''
+    form_method = '' # Current method that the form expects,
     csrfmiddlewaretoken = ''
     next_specified = ''
 
@@ -262,18 +238,20 @@ class customHTML(HTMLParser):
     '''
     def getUnseen(self):
         for path, seen in ALL_PATHS.items():
-            if seen == False:
+            if seen == False: # only return an unseen page
                 seen = True # Set status to true so that we dont crawl again
                 return path
-
     '''
        Case 1: Tag is 'a'
         - Indicates that there is a link (a path) in the data
         - Add this path to a list so that it can be explored later
        Case 2: 
         - Tag is 'h3'
-        - Secret flag is in the data
-
+        - Secret flag could be in the data
+       Case 3: 
+        - In a form, could possibly be a login location
+       Case 4: 
+        - We are in a form and input is prompted, extract neccecary info from the form
     '''
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -288,75 +266,64 @@ class customHTML(HTMLParser):
             self.form_method = attrs.get('method', 'get').lower() # Default form method is GET, otherwise POST
         elif tag == 'input' and self.inForm: # We have found input tags in a form to collect data from
             self.handleForm(tag, attrs)
-
+    '''
+        If the class in the h3 header is 'secret_flag' mark that we have found a flag
+        and the contents need to be extracted from the data with handle_data()
+    '''
     def handleSecrets(self, attrs):
         dict_attrs = dict(attrs)
-        #print(f'[in handleSecrets] Attributes: {dict_attrs}')
         class_name = dict_attrs.get("class")
         if class_name == 'secret_flag':
-            self.flag_found = True
-                
+            self.flag_found = True          
     '''
-        If we are in a form. Find what inputs we need and extract the CSRFMiddlewareToken
+        If we are in a form and input is required, extract the values
+        for next and csrfmiddlewaretoken. These are needed for the login POST request
     '''
     def handleForm(self, tag, attrs):
         dict_attrs = dict(attrs)
-        #print(f'[in handleForm] Attributes: {dict_attrs}')
         input_type = dict_attrs.get("type")
         input_name = dict_attrs.get("name")
-        # Extract CSRF token if present
-        if input_type == "hidden" and input_name == "csrfmiddlewaretoken":
-            self.csrfmiddlewaretoken = dict_attrs['value']
-            #print(f'Found Middleware: {self.csrfmiddlewaretoken}')
-        elif input_type == "hidden" and input_name == "next":
-            self.next_specified = dict_attrs.get("value")
-
+        if input_type == "hidden" and input_name == "csrfmiddlewaretoken":  # Extract CSRF token if present
+            self.csrfmiddlewaretoken = dict_attrs['value'] # save the moddleware token
+        elif input_type == "hidden" and input_name == "next":  # Extract next location if present
+            self.next_specified = dict_attrs.get("value") # save the next path 
     '''
-        Extracts the links from the HTML and add them to a list if they are not already present
+        Extracts the links from the HTML and add them to a list if they are not already present.
+        Used if we are in an 'a' tag, uses helper validURL to determine if the URL should be crawled
     '''
     def handleLinks(self, attrs):
         found_path = attrs.get('href')
         if found_path and self.validURL(found_path): # make sure the found path is valid
             if found_path not in ALL_PATHS: # if the found path is not already in our saved paths
                 ALL_PATHS[found_path] = False # add it
-                #print(f'Found New Path. All: {ALL_PATHS}')
-
     '''
         To be called inside the state tag
-        Based on which function mpping it should do something 
+        If we have found a flag inside the current tag, extract the data and
+        save the flag contents. 
+        Exit the program if we have found all of the flags
     '''
     def handle_data(self, data):
         if self.flag_found:
-            flag_content = data.strip().split(': ')[1]
+            flag_content = data.strip().split(': ')[1] # Extract 64 char sequence from data
             self.flags.append(flag_content)
-            #print(f'Flag {len(self.flags)} Found')
-            print(flag_content) #"Extracted flag:", 
-            self.flag_found = False
-        if len(self.flags) == 5:
-            #print('All 5 Flags Found')
-            # for x in self.flags:
-            #     print(x)
+            print(flag_content)
+            self.flag_found = False # set back to false as this flag as been handled
+        if len(self.flags) == 5: # All flags found
             sys.exit(0)
-
-
     '''
-        TODO: Not sure if this works properly
         Returns true if the URL is valid and the path should be crawled.
-        Returns false otherwise
+        Returns false otherwise.
     '''
     def validURL(self, url):
-        # Assume base_url is the root URL of your target website
-        base_url = "https://www.3700.network"
+        base_url = "https://www.3700.network" # Root to compare to
         base_netloc = urllib.parse.urlparse(base_url).netloc
 
-        # Fully resolve relative URLs against the base_url
-        full_url = urllib.parse.urljoin(base_url, url)
-        parsed = urllib.parse.urlparse(full_url)
+        full_url = urllib.parse.urljoin(base_url, url) # Join base with the netloc
+        parsed = urllib.parse.urlparse(full_url) 
 
-        # Now, parsed contains the full URL. You can check its netloc against your base netloc
+        # Make sure the netlocs are the same and that it is a URL that we support (in the scheme) (gets rid of the mailto)
         return parsed.netloc == base_netloc and parsed.scheme in ["http", "https"]
             
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
     parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
